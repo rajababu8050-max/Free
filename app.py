@@ -49,6 +49,9 @@ else:
     print("❌ FIREBASE_CREDENTIALS Environment Variable missing!")
 
 # Groq API Key Setup
+
+GROQ_API_KEY = "gsk_AapkiActualGroqAPIKeyYahanDaalein"
+
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 
 semaphore = asyncio.Semaphore(2)

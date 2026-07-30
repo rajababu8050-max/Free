@@ -41,7 +41,7 @@ else:
     print("❌ FIREBASE_CREDENTIALS Environment Variable missing!")
 
 # Groq API Key Setup
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 
 semaphore = asyncio.Semaphore(2)
 
@@ -126,7 +126,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <button type="button" onclick="document.getElementById('audioInput').click()" class="inner-bg border border-slate-600 font-medium px-4 py-2 rounded-xl text-sm">
                         Browse Files
                     </button>
-                    <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
+                    <button type="button" id="startBtn" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
                         Start Batch Analysis
                     </button>
                 </div>
@@ -449,6 +449,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                 return;
             }
 
+            var startBtn = document.getElementById('startBtn');
+            startBtn.disabled = true;
+            startBtn.innerText = "Processing...";
             document.getElementById('loader').classList.remove('hidden');
             document.getElementById('batchResultsContainer').classList.add('hidden');
             
@@ -470,6 +473,8 @@ HTML_CONTENT = """<!DOCTYPE html>
                 alert("Error: " + err.message);
             } finally {
                 document.getElementById('loader').classList.add('hidden');
+                startBtn.disabled = false;
+                startBtn.innerText = "Start Batch Analysis";
             }
         }
 
@@ -834,13 +839,16 @@ async def delete_metric(metric_id: str):
 
 def transcribe_bytes(audio_bytes: bytes, filename: str = "audio.mp3"):
     """Transcribe audio using Groq Whisper model"""
+    if not GROQ_API_KEY:
+        raise Exception("GROQ_API_KEY is missing in Environment Variables!")
+
     url = "https://api.groq.com/openai/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
     
     files = {"file": (filename, audio_bytes, "audio/mp3")}
     data = {
         "model": "whisper-large-v3",
-        "response_format": "verbose_json",
+        "response_format": "json",
         "temperature": 0.0
     }
     
@@ -849,26 +857,24 @@ def transcribe_bytes(audio_bytes: bytes, filename: str = "audio.mp3"):
         raise Exception(f"Groq Whisper Error ({response.status_code}): {response.text}")
         
     res_data = response.json()
-    duration = res_data.get("duration", 1)
-    segments = res_data.get("segments", [])
+    full_text = res_data.get("text", "").strip()
+    if not full_text:
+        full_text = "No speech detected in audio."
+
+    total_words = len(full_text.split())
+    # Est duration estimate based on word count
+    duration = max(1, int(total_words / 2.2))
     
-    formatted_transcript = []
-    total_words = 0
-    
-    for seg in segments:
-        text = seg.get("text", "").strip()
-        if not text:
-            continue
-        words = len(text.split())
-        total_words += words
-        
-        formatted_transcript.append({"speaker": "Speaker", "text": text})
-            
+    formatted_transcript = [{"speaker": "Speaker", "text": full_text}]
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
+    
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
 def evaluate_quality(transcript, metrics_list):
     """Evaluate quality using Groq Llama-3.3-70b model"""
+    if not GROQ_API_KEY:
+        raise Exception("GROQ_API_KEY is missing in Environment Variables!")
+
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -922,9 +928,12 @@ def evaluate_quality(transcript, metrics_list):
     res_data = response.json()
     raw_content = res_data['choices'][0]['message']['content']
     
-    # Clean string and convert to JSON
-    clean_json = re.sub(r'```(?:json)?\n?', '', raw_content).replace('```', '').strip()
-    return json.loads(clean_json)
+    # Robust Clean & Parse JSON
+    try:
+        return json.loads(raw_content)
+    except Exception:
+        clean_json = re.sub(r'```(?:json)?\n?', '', raw_content).replace('```', '').strip()
+        return json.loads(clean_json)
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -957,6 +966,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
         return {"status": "success", "filename": file.filename, "data": {"metrics": metrics, "transcript": transcript, "evaluation": evaluation}}
     except Exception as e:
+        print(f"❌ Error processing {file.filename}: {str(e)}")
         return {"status": "error", "filename": file.filename, "error": str(e)}
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):

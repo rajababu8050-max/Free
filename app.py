@@ -23,14 +23,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Firebase Setup
+# ================= Firebase Setup (FIXED) =================
 firebase_json_env = os.environ.get("FIREBASE_CREDENTIALS")
 
 if firebase_json_env:
     try:
         cred_dict = json.loads(firebase_json_env)
-        cred = credentials.Certificate(cred_dict)
-        firebase_admin.initialize_app(cred)
+        
+        # Private key formatting fix for Cloud Hosting
+        if "private_key" in cred_dict:
+            cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+
+        # Prevent duplicate app initialization crash
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            
         db = firestore.client()
         print("✅ Firebase Firestore Connected Successfully!")
     except Exception as e:
@@ -862,7 +870,6 @@ def transcribe_bytes(audio_bytes: bytes, filename: str = "audio.mp3"):
         full_text = "No speech detected in audio."
 
     total_words = len(full_text.split())
-    # Est duration estimate based on word count
     duration = max(1, int(total_words / 2.2))
     
     formatted_transcript = [{"speaker": "Speaker", "text": full_text}]
@@ -928,7 +935,6 @@ def evaluate_quality(transcript, metrics_list):
     res_data = response.json()
     raw_content = res_data['choices'][0]['message']['content']
     
-    # Robust Clean & Parse JSON
     try:
         return json.loads(raw_content)
     except Exception:
@@ -940,7 +946,6 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
         audio_bytes = await file.read()
         loop = asyncio.get_event_loop()
         
-        # Transcribe & Evaluate via Groq
         transcript, metrics = await loop.run_in_executor(None, transcribe_bytes, audio_bytes, file.filename)
         evaluation = await loop.run_in_executor(None, evaluate_quality, transcript, active_metrics)
         

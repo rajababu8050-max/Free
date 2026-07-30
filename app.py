@@ -862,7 +862,6 @@ def transcribe_bytes(audio_bytes: bytes, filename: str = "audio.mp3"):
         words = len(text.split())
         total_words += words
         
-        # Simple alternating speaker label heuristic for segments
         formatted_transcript.append({"speaker": "Speaker", "text": text})
             
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
@@ -922,4 +921,94 @@ def evaluate_quality(transcript, metrics_list):
         
     res_data = response.json()
     raw_content = res_data['choices'][0]['message']['content']
-    clean_json = re.sub(r'```(?:json)?\n?', '', raw_content).replace('
+    
+    # Clean string and convert to JSON
+    clean_json = re.sub(r'```(?:json)?\n?', '', raw_content).replace('```', '').strip()
+    return json.loads(clean_json)
+
+async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
+    try:
+        audio_bytes = await file.read()
+        loop = asyncio.get_event_loop()
+        
+        # Transcribe & Evaluate via Groq
+        transcript, metrics = await loop.run_in_executor(None, transcribe_bytes, audio_bytes, file.filename)
+        evaluation = await loop.run_in_executor(None, evaluate_quality, transcript, active_metrics)
+        
+        created_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if db:
+            try:
+                audit_data = {
+                    "filename": file.filename,
+                    "score": evaluation.get("overall_score", 0),
+                    "summary": evaluation.get("summary", ""),
+                    "evaluated_metrics": evaluation.get("evaluated_metrics", {}),
+                    "wpm": metrics.get("wpm", 0),
+                    "duration": metrics.get("duration", 0),
+                    "total_words": metrics.get("total_words", 0),
+                    "transcript": transcript,
+                    "created_at": created_time
+                }
+                db.collection("audits").add(audit_data)
+                print(f"✅ Document added to Firebase for {file.filename}")
+            except Exception as fe:
+                print("❌ Firebase Write Error:", fe)
+
+        return {"status": "success", "filename": file.filename, "data": {"metrics": metrics, "transcript": transcript, "evaluation": evaluation}}
+    except Exception as e:
+        return {"status": "error", "filename": file.filename, "error": str(e)}
+
+async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
+    async with semaphore:
+        return await process_single_file(file, active_metrics)
+
+@app.post("/api/analyze-batch")
+async def analyze_audio_batch(files: List[UploadFile] = File(...)):
+    active_metrics = await get_metrics()
+    tasks = [process_single_file_limited(file, active_metrics) for file in files]
+    results = await asyncio.gather(*tasks)
+    return {"results": results}
+
+@app.get("/api/history")
+async def get_history():
+    if not db:
+        print("❌ Firebase DB Object is None in /api/history")
+        return []
+    try:
+        docs = db.collection("audits").limit(50).stream()
+        history = []
+        for doc in docs:
+            data = doc.to_dict()
+            history.append({
+                "id": doc.id,
+                "filename": data.get("filename", "Unknown"),
+                "score": data.get("score", 0),
+                "summary": data.get("summary", ""),
+                "evaluated_metrics": data.get("evaluated_metrics", {}),
+                "wpm": data.get("wpm", 0),
+                "duration": data.get("duration", 0),
+                "total_words": data.get("total_words", 0),
+                "transcript": data.get("transcript", []),
+                "created_at": data.get("created_at", "")
+            })
+        
+        history.sort(key=lambda x: x["created_at"], reverse=True)
+        return history
+    except Exception as e:
+        print("❌ Firebase Fetch Error:", str(e))
+        return []
+
+@app.delete("/api/history/{audit_id}")
+async def delete_history_audit(audit_id: str):
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    try:
+        db.collection("audits").document(audit_id).delete()
+        return {"status": "success", "message": f"Audit {audit_id} deleted successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

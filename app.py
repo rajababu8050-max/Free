@@ -23,22 +23,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ================= Firebase Setup (FIXED) =================
+# ================= Firebase Setup (Fixed Duplicate Init Bug) =================
 firebase_json_env = os.environ.get("FIREBASE_CREDENTIALS")
 
 if firebase_json_env:
     try:
         cred_dict = json.loads(firebase_json_env)
-        
-        # Private key formatting fix for Cloud Hosting
         if "private_key" in cred_dict:
             cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
 
-        # Prevent duplicate app initialization crash
         if not firebase_admin._apps:
             cred = credentials.Certificate(cred_dict)
             firebase_admin.initialize_app(cred)
-            
+
         db = firestore.client()
         print("✅ Firebase Firestore Connected Successfully!")
     except Exception as e:
@@ -48,8 +45,7 @@ else:
     db = None
     print("❌ FIREBASE_CREDENTIALS Environment Variable missing!")
 
-# Groq API Key Setup
-
+# Groq Free API Key Setup
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 
 semaphore = asyncio.Semaphore(2)
@@ -83,7 +79,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Call Quality Auditor Pro (Powered by Groq)</title>
+    <title>AI Call Quality Auditor Pro (Groq Powered)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -141,7 +137,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
             </div>
             <div id="loader" class="hidden mt-4 text-xs text-blue-400 animate-pulse font-medium">
-                ⏳ Groq Whisper speech transcription & Llama-3 metrics evaluation running... Please wait...
+                ⏳ Groq speech transcription & Llama-3 metrics evaluation running... Please wait...
             </div>
         </div>
 
@@ -322,7 +318,6 @@ HTML_CONTENT = """<!DOCTYPE html>
         var historyDataList = [];
         var activeMetrics = [];
         
-        // History Pagination Variables
         var currentPage = 1;
         var itemsPerPage = 10;
 
@@ -849,7 +844,7 @@ async def delete_metric(metric_id: str):
 def transcribe_bytes(audio_bytes: bytes, filename: str = "audio.mp3"):
     """Transcribe audio using Groq Whisper model"""
     if not GROQ_API_KEY:
-        raise Exception("GROQ_API_KEY is missing in Environment Variables!")
+        raise Exception("GROQ_API_KEY Environment Variable missing hai! Render Dashboard par GROQ_API_KEY set karein.")
 
     url = "https://api.groq.com/openai/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
@@ -881,7 +876,7 @@ def transcribe_bytes(audio_bytes: bytes, filename: str = "audio.mp3"):
 def evaluate_quality(transcript, metrics_list):
     """Evaluate quality using Groq Llama-3.3-70b model"""
     if not GROQ_API_KEY:
-        raise Exception("GROQ_API_KEY is missing in Environment Variables!")
+        raise Exception("GROQ_API_KEY Environment Variable missing hai! Render Dashboard par GROQ_API_KEY set karein.")
 
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {

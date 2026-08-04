@@ -41,7 +41,14 @@ else:
     print("❌ FIREBASE_CREDENTIALS Environment Variable missing!")
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+# ================= OpenRouter API Key Setup =================
+# Environment variable se key uthayega, ya default placeholder replace karein
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+
+# Aap chahein toh koi dusra free model bhi use kar sakte hain:
+# e.g., "google/gemini-2.5-flash:free", "mistralai/mistral-7b-instruct:free"
+OPENROUTER_MODEL = "google/gemini-2.5-flash:free"
 
 semaphore = asyncio.Semaphore(2)
 
@@ -320,17 +327,16 @@ HTML_CONTENT = """<!DOCTYPE html>
     </div>
 
     <script>
-        // ⚠️ REPLACE THIS WITH YOUR FIREBASE WEB PROJECT CONFIG ⚠️
         const firebaseConfig = {
-  apiKey: "AIzaSyDQfBUENJ87idiFkHUCGXWjjt8o8ZpxX1M",
-  authDomain: "ai-call-quality-auditor-pro.firebaseapp.com",
-  databaseURL: "https://ai-call-quality-auditor-pro-default-rtdb.firebaseio.com",
-  projectId: "ai-call-quality-auditor-pro",
-  storageBucket: "ai-call-quality-auditor-pro.firebasestorage.app",
-  messagingSenderId: "788716678382",
-  appId: "1:788716678382:web:778853207b4fa11e0517ff",
-  measurementId: "G-R4R06JN2SK"
-};
+          apiKey: "AIzaSyDQfBUENJ87idiFkHUCGXWjjt8o8ZpxX1M",
+          authDomain: "ai-call-quality-auditor-pro.firebaseapp.com",
+          databaseURL: "https://ai-call-quality-auditor-pro-default-rtdb.firebaseio.com",
+          projectId: "ai-call-quality-auditor-pro",
+          storageBucket: "ai-call-quality-auditor-pro.firebasestorage.app",
+          messagingSenderId: "788716678382",
+          appId: "1:788716678382:web:778853207b4fa11e0517ff",
+          measurementId: "G-R4R06JN2SK"
+        };
 
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
@@ -344,7 +350,6 @@ HTML_CONTENT = """<!DOCTYPE html>
         var currentPage = 1;
         var itemsPerPage = 10;
 
-        // Listen for Authentication State
         auth.onAuthStateChanged(async (user) => {
             if (user) {
                 idToken = await user.getIdToken();
@@ -382,7 +387,6 @@ HTML_CONTENT = """<!DOCTYPE html>
             auth.signOut();
         }
 
-        // Authenticated Fetch Helper
         async function fetchAuth(url, options = {}) {
             if (!options.headers) options.headers = {};
             options.headers['Authorization'] = 'Bearer ' + idToken;
@@ -851,8 +855,10 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
+# ================= OpenRouter Evaluation Function =================
+
 def evaluate_quality(transcript, metrics_list):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
+    url = "https://openrouter.ai/api/v1/chat/completions"
     
     evaluated_metrics_json = {}
     metric_instructions = []
@@ -874,7 +880,7 @@ def evaluate_quality(transcript, metrics_list):
     Transcript:
     {json.dumps(transcript, indent=2)}
 
-    Return JSON strictly matching this schema format ONLY:
+    Return JSON strictly matching this schema format ONLY (No extra explanation, no markdown formatting outside json):
     {{
         "overall_score": 85,
         "summary": "Detailed call summary...",
@@ -884,12 +890,33 @@ def evaluate_quality(transcript, metrics_list):
     }}
     """
 
-    response = requests.post(url, headers={"Content-Type": "application/json"}, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:8000",
+        "X-Title": "AI Call Auditor"
+    }
+
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    
     if response.status_code != 200:
-        raise Exception(f"Gemini Error ({response.status_code}): {response.text}")
+        raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
+        
     res_data = response.json()
-    gemini_raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
-    clean_json = re.sub(r'```(?:json)?\n?', '', gemini_raw_text).replace('```', '').strip()
+    openrouter_raw_text = res_data['choices'][0]['message']['content']
+    
+    # Markdown symbols (```json ... ```) safai
+    clean_json = re.sub(r'```(?:json)?\n?', '', openrouter_raw_text).replace('```', '').strip()
     return json.loads(clean_json)
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
@@ -930,7 +957,6 @@ async def analyze_audio_batch(
     files: List[UploadFile] = File(...),
     user: dict = Depends(verify_firebase_token)
 ):
-    # Fetch metrics internally without requiring authentication context
     if db:
         docs = db.collection("metrics").stream()
         active_metrics = [doc.to_dict() for doc in docs]

@@ -43,11 +43,9 @@ else:
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
 # ================= OpenRouter API Key Setup =================
-# Environment variable se key uthayega, ya default placeholder replace karein
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
-# Aap chahein toh koi dusra free model bhi use kar sakte hain:
-# e.g., "google/gemini-2.5-flash:free", "mistralai/mistral-7b-instruct:free"
+# Active Free Model
 OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
 
 semaphore = asyncio.Semaphore(2)
@@ -325,7 +323,11 @@ HTML_CONTENT = """<!DOCTYPE html>
             </div>
         </div>
     </div>
-<p>Disclaimer:"This platform is built for educational, hands-on learning, and testing purposes to safely evaluate AI audio auditing and model integrations using free API keys with zero infrastructure costs."</p>
+
+    <div class="max-w-6xl mx-auto text-center mt-6 p-3 rounded-xl bg-slate-900/40 border border-slate-800 text-[11px] text-slate-500">
+        Disclaimer: "This platform is built for educational, hands-on learning, and testing purposes to safely evaluate AI audio auditing and model integrations using free API keys with zero infrastructure costs."
+    </div>
+
     <script>
         const firebaseConfig = {
           apiKey: "AIzaSyDQfBUENJ87idiFkHUCGXWjjt8o8ZpxX1M",
@@ -519,34 +521,51 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
+        // ================= UPDATED CHUNKING & AUTO-TOKEN REFRESH BATCH FUNCTION =================
         async function uploadAudioBatch() {
-            if(selectedFiles.length === 0) {
+            if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
                 return;
             }
 
             document.getElementById('loader').classList.remove('hidden');
-            document.getElementById('batchResultsContainer').classList.add('hidden');
+            document.getElementById('batchResultsContainer').classList.remove('hidden');
             
-            var formData = new FormData();
-            selectedFiles.forEach(function(file) {
-                formData.append("files", file);
-            });
+            currentBatchResults = [];
+            const CHUNK_SIZE = 2; // Ek baar mein 2 files process hongi (Render timeout se bachne ke liye)
 
-            try {
-                var res = await fetchAuth("/api/analyze-batch", { method: "POST", body: formData });
-                var batchData = await res.json();
-                if(!res.ok) throw new Error(batchData.detail || "Server error");
+            for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
+                const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
+                const formData = new FormData();
+                chunk.forEach(file => formData.append("files", file));
 
-                currentBatchResults = batchData.results || [];
-                renderBatchResults(currentBatchResults);
-                document.getElementById('batchResultsContainer').classList.remove('hidden');
-                setTimeout(loadHistory, 1000);
-            } catch(err) {
-                alert("Error: " + err.message);
-            } finally {
-                document.getElementById('loader').classList.add('hidden');
+                try {
+                    // Fresh token fetch kar rahe hain taaki 1 hour token expire issue na aaye
+                    if (auth.currentUser) {
+                        idToken = await auth.currentUser.getIdToken(true);
+                    }
+
+                    const res = await fetchAuth("/api/analyze-batch", { method: "POST", body: formData });
+                    const batchData = await res.json();
+
+                    if (res.ok && batchData.results) {
+                        currentBatchResults.push(...batchData.results);
+                        renderBatchResults(currentBatchResults); // Real-time UI Updates
+                    } else {
+                        console.error("Chunk Error:", batchData.detail || "Chunk failed");
+                    }
+                } catch (err) {
+                    console.error("Batch processing error:", err);
+                }
+
+                // OpenRouter Free Rate Limits (RPM) se bachne ke liye 2 second ka gap
+                if (i + CHUNK_SIZE < selectedFiles.length) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
             }
+
+            document.getElementById('loader').classList.add('hidden');
+            setTimeout(loadHistory, 1000);
         }
 
         function renderBatchResults(results) {

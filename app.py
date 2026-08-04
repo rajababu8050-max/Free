@@ -521,7 +521,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= UPDATED CHUNKING & AUTO-TOKEN REFRESH BATCH FUNCTION =================
+        // ================= CHUNKING & AUTO-TOKEN REFRESH BATCH FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -540,7 +540,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 chunk.forEach(file => formData.append("files", file));
 
                 try {
-                    // Fresh token fetch kar rahe hain taaki 1 hour token expire issue na aaye
+                    // Fresh token fetch kar rahe hain taaki token expire issue na aaye
                     if (auth.currentUser) {
                         idToken = await auth.currentUser.getIdToken(true);
                     }
@@ -658,17 +658,28 @@ HTML_CONTENT = """<!DOCTYPE html>
             });
         }
 
+        // ================= UPDATED LOAD HISTORY WITH AUTO-TOKEN REFRESH =================
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
+                // Fresh Token fetch kar rahe hain taaki history load hone me auth error na aaye
+                if (auth.currentUser) {
+                    idToken = await auth.currentUser.getIdToken(true);
+                }
+
                 var res = await fetchAuth("/api/history");
+                
+                if(!res.ok) {
+                    throw new Error("HTTP error " + res.status);
+                }
+
                 var list = await res.json();
                 historyDataList = list || [];
                 currentPage = 1;
                 renderHistoryTable();
             } catch(e) {
                 console.error("History load error:", e);
-                hTable.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-rose-500">Failed to load history from server.</td></tr>';
+                hTable.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-rose-500">Failed to load history from server. Click Refresh to retry.</td></tr>';
             }
         }
 

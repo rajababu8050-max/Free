@@ -325,7 +325,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             </div>
         </div>
     </div>
-
+<p>Disclaimer:"This platform is built for educational, hands-on learning, and testing purposes to safely evaluate AI audio auditing and model integrations using free API keys with zero infrastructure costs."</p>
     <script>
         const firebaseConfig = {
           apiKey: "AIzaSyDQfBUENJ87idiFkHUCGXWjjt8o8ZpxX1M",

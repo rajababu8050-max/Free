@@ -48,7 +48,7 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 # Aap chahein toh koi dusra free model bhi use kar sakte hain:
 # e.g., "google/gemini-2.5-flash:free", "mistralai/mistral-7b-instruct:free"
-OPENROUTER_MODEL = "google/gemini-2.5-flash:free"
+OPENROUTER_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
 
 semaphore = asyncio.Semaphore(2)
 

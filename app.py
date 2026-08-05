@@ -4,6 +4,7 @@ import re
 import time
 import asyncio
 import requests
+import itertools
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -43,14 +44,26 @@ else:
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# ================= OpenRouter API Setup (Free GPT Model) =================
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+# ================= Groq High-Speed API Key Rotation Setup =================
+# Comma-separated keys: GROQ_KEYS="gsk_key1,gsk_key2" or single GROQ_API_KEY
+raw_groq_keys = os.environ.get("GROQ_KEYS", os.environ.get("GROQ_API_KEY", ""))
+GROQ_KEYS = [k.strip() for k in raw_groq_keys.split(",") if k.strip()]
 
-# Free OpenAI Open-Weight GPT Model
-OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
+if not GROQ_KEYS:
+    print("⚠️ Warning: No GROQ_KEYS found in environment variables!")
 
-# Rate Limit Safety: Process up to 2 files concurrently for OpenRouter Free Tier
-semaphore = asyncio.Semaphore(2)
+key_cycle = itertools.cycle(GROQ_KEYS) if GROQ_KEYS else None
+
+def get_next_groq_key():
+    """Rotates API Keys automatically to ensure ZERO rate limits on 50+ bulk audios"""
+    if key_cycle:
+        return next(key_cycle)
+    return ""
+
+GROQ_MODEL = "llama-3.1-8b-instant"
+
+# High Concurrency Worker: Process 5 audio files simultaneously
+semaphore = asyncio.Semaphore(5)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -102,7 +115,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Call Quality Auditor Pro</title>
+    <title>AI Call Quality Auditor Pro (Bulk 50+ Audio)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = { darkMode: 'class' }
@@ -162,7 +175,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
                     AI Call Quality Auditor Pro
                 </h1>
-                <p class="text-sub text-sm">Pharma Metrics Evaluation & Batch Quality Auditing</p>
+                <p class="text-sub text-sm">Pharma Metrics Evaluation & 50+ Bulk Batch Quality Auditing</p>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
                 <a href="/ai.html" class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold px-4 py-2 rounded-xl text-xs sm:text-sm shadow-lg shadow-purple-500/30 flex items-center gap-2 transform hover:-translate-y-0.5 transition duration-200 border border-purple-400/30">
@@ -184,7 +197,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="card-bg border-2 border-dashed border-slate-600 rounded-2xl p-6 text-center shadow-lg">
             <div class="space-y-3">
                 <div class="w-12 h-12 bg-blue-500/10 text-blue-400 rounded-full flex items-center justify-center mx-auto text-xl font-bold">🎙️</div>
-                <p id="fileName" class="text-sm font-medium">Select Audio File(s) (.mp3, .wav)</p>
+                <p id="fileName" class="text-sm font-medium">Select Audio File(s) (.mp3, .wav) - Supports up to 50+ files</p>
                 <input type="file" id="audioInput" accept="audio/*" multiple class="hidden" onchange="fileSelected(event)">
                 
                 <div class="flex justify-center gap-3">
@@ -192,12 +205,19 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Browse Files
                     </button>
                     <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
-                        Start Batch Analysis
+                        🚀 Start Bulk 50+ Batch Analysis
                     </button>
                 </div>
             </div>
-            <div id="loader" class="hidden mt-4 text-xs text-blue-400 animate-pulse font-medium">
-                ⚡ Auditing speech, analyzing metrics with OpenRouter GPT & generating summary... Please wait...
+            
+            <!-- Progress Bar for 50 Audios -->
+            <div id="progressContainer" class="hidden mt-4 space-y-2">
+                <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                    <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <div id="loaderText" class="text-xs text-blue-400 font-medium">
+                    ⚡ Auditing speech & evaluating metrics... 0 / 0 Completed
+                </div>
             </div>
         </div>
 
@@ -519,20 +539,23 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= BATCH UPLOAD FUNCTION =================
+        // ================= HIGH-SPEED CHUNKING BATCH UPLOAD FUNCTION (50 AUDIOS) =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
                 return;
             }
 
-            document.getElementById('loader').classList.remove('hidden');
+            document.getElementById('progressContainer').classList.remove('hidden');
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 2; // Process 2 files per batch to remain safely within OpenRouter Free Limits
+            const totalFiles = selectedFiles.length;
+            const CHUNK_SIZE = 5; // Send 5 files per HTTP request parallelly
 
-            for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
+            let completedCount = 0;
+
+            for (let i = 0; i < totalFiles; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
                 const formData = new FormData();
                 chunk.forEach(file => formData.append("files", file));
@@ -551,12 +574,20 @@ HTML_CONTENT = """<!DOCTYPE html>
                     console.error("Batch processing error:", err);
                 }
 
-                if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                completedCount += chunk.length;
+                const progressPct = Math.round((completedCount / totalFiles) * 100);
+                document.getElementById('progressBar').style.width = progressPct + "%";
+                document.getElementById('loaderText').innerText = `⚡ Auditing speech & evaluating metrics... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
+
+                if (i + CHUNK_SIZE < totalFiles) {
+                    await new Promise(resolve => setTimeout(resolve, 300));
                 }
             }
 
-            document.getElementById('loader').classList.add('hidden');
+            setTimeout(() => {
+                document.getElementById('progressContainer').classList.add('hidden');
+            }, 2000);
+
             setTimeout(loadHistory, 1000);
         }
 
@@ -747,7 +778,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         }
     </script>
 
-    <p>disclaimer: this is only education and testing purpose</p>
+    <p class="text-center text-sub text-[10px] mt-4">disclaimer: this is only education and testing purpose</p>
 </body>
 </html>
 """
@@ -879,10 +910,10 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= OpenRouter Free GPT Evaluation Function =================
+# ================= Groq High-Speed Evaluation Function =================
 
 def evaluate_quality(transcript, metrics_list):
-    url = "https://openrouter.ai/api/v1/chat/completions"
+    url = "https://api.groq.com/openai/v1/chat/completions"
     
     evaluated_metrics_json = {}
     metric_instructions = []
@@ -919,25 +950,24 @@ def evaluate_quality(transcript, metrics_list):
     }}
     """
 
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "http://localhost:8000",
-        "X-Title": "AI Call Quality Auditor",
-        "Content-Type": "application/json"
-    }
-
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": GROQ_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "response_format": {"type": "json_object"},
         "temperature": 0.0
     }
 
-    max_retries = 6
-    retry_delay = 4
+    max_retries = 5
+    retry_delay = 2
 
     for attempt in range(max_retries):
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        active_key = get_next_groq_key()
+        headers = {
+            "Authorization": f"Bearer {active_key}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(url, headers=headers, json=payload, timeout=40)
         
         if response.status_code == 200:
             res_data = response.json()
@@ -946,13 +976,13 @@ def evaluate_quality(transcript, metrics_list):
             return json.loads(clean_json)
         
         elif response.status_code == 429:
-            print(f"⚠️ OpenRouter 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            print(f"⚠️ Groq 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay += 3
+            retry_delay += 2
         else:
-            raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
+            raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
-    raise Exception("OpenRouter Rate Limit Exceeded after maximum retries.")
+    raise Exception("Groq Rate Limit Exceeded after maximum retries.")
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -985,7 +1015,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(1.0)  # Safe buffer delay for OpenRouter Free Tier
+        await asyncio.sleep(0.1)  # Ultra-fast processing delay
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

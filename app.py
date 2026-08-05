@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 import asyncio
 import requests
 from typing import List, Dict, Any, Optional
@@ -23,7 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Firebase Setup
+# ================= Firebase Setup =================
 firebase_json_env = os.environ.get("FIREBASE_CREDENTIALS")
 
 if firebase_json_env:
@@ -41,14 +42,13 @@ else:
     print("❌ FIREBASE_CREDENTIALS Environment Variable missing!")
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-# ================= OpenRouter API Key Setup =================
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-
-# Active Free Model
+# Active Model (You can change this to "meta-llama/llama-3.1-8b-instruct:free" if needed)
 OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
 
-semaphore = asyncio.Semaphore(2)
+# Concurrency control: Set to 1 to avoid hitting shared free-tier rate limits
+semaphore = asyncio.Semaphore(1)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -74,7 +74,7 @@ def init_default_metrics():
 
 init_default_metrics()
 
-# ================= Authentication Middleware Dependency =================
+# ================= Authentication Dependency =================
 
 async def verify_firebase_token(request: Request):
     auth_header = request.headers.get("Authorization")
@@ -93,7 +93,7 @@ async def verify_firebase_token(request: Request):
             detail=f"Unauthorized: Invalid or expired token ({str(e)})"
         )
 
-# ================= HTML Content with Integrated Admin Auth =================
+# ================= HTML Content =================
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -103,9 +103,7 @@ HTML_CONTENT = """<!DOCTYPE html>
     <title>AI Call Quality Auditor Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        tailwind.config = {
-            darkMode: 'class',
-        }
+        tailwind.config = { darkMode: 'class' }
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -157,7 +155,6 @@ HTML_CONTENT = """<!DOCTYPE html>
     <!-- MAIN PROTECTED DASHBOARD CONTENT -->
     <div id="dashboardContent" class="hidden max-w-6xl mx-auto space-y-6">
         
-        <!-- Top Header with Dark/Light Toggle & Links -->
         <div class="flex justify-between items-center border-b border-slate-700/60 pb-4 flex-wrap gap-3">
             <div>
                 <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
@@ -216,7 +213,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
             </div>
 
-            <!-- Aggregate Pharma Upsell Table Box -->
+            <!-- Aggregate Summary Table Box -->
             <div id="summaryTableContainer" class="card-bg border border-slate-700 rounded-2xl p-5 shadow-xl space-y-4">
                 <div class="flex justify-between items-center border-b border-slate-700 pb-3">
                     <div>
@@ -324,10 +321,6 @@ HTML_CONTENT = """<!DOCTYPE html>
         </div>
     </div>
 
-    <div class="max-w-6xl mx-auto text-center mt-6 p-3 rounded-xl bg-slate-900/40 border border-slate-800 text-[11px] text-slate-500">
-        Disclaimer: "This platform is built for educational, hands-on learning, and testing purposes to safely evaluate AI audio auditing and model integrations using free API keys with zero infrastructure costs."
-    </div>
-
     <script>
         const firebaseConfig = {
           apiKey: "AIzaSyDQfBUENJ87idiFkHUCGXWjjt8o8ZpxX1M",
@@ -391,6 +384,9 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         async function fetchAuth(url, options = {}) {
             if (!options.headers) options.headers = {};
+            if (auth.currentUser) {
+                idToken = await auth.currentUser.getIdToken();
+            }
             options.headers['Authorization'] = 'Bearer ' + idToken;
             return fetch(url, options);
         }
@@ -521,7 +517,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= CHUNKING & AUTO-TOKEN REFRESH BATCH FUNCTION =================
+        // ================= CHUNKING BATCH UPLOAD FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -532,7 +528,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 2; // Ek baar mein 2 files process hongi (Render timeout se bachne ke liye)
+            const CHUNK_SIZE = 2; // Process 2 files per request to prevent timeouts
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -540,17 +536,12 @@ HTML_CONTENT = """<!DOCTYPE html>
                 chunk.forEach(file => formData.append("files", file));
 
                 try {
-                    // Fresh token fetch kar rahe hain taaki token expire issue na aaye
-                    if (auth.currentUser) {
-                        idToken = await auth.currentUser.getIdToken(true);
-                    }
-
                     const res = await fetchAuth("/api/analyze-batch", { method: "POST", body: formData });
                     const batchData = await res.json();
 
                     if (res.ok && batchData.results) {
                         currentBatchResults.push(...batchData.results);
-                        renderBatchResults(currentBatchResults); // Real-time UI Updates
+                        renderBatchResults(currentBatchResults);
                     } else {
                         console.error("Chunk Error:", batchData.detail || "Chunk failed");
                     }
@@ -558,7 +549,6 @@ HTML_CONTENT = """<!DOCTYPE html>
                     console.error("Batch processing error:", err);
                 }
 
-                // OpenRouter Free Rate Limits (RPM) se bachne ke liye 2 second ka gap
                 if (i + CHUNK_SIZE < selectedFiles.length) {
                     await new Promise(resolve => setTimeout(resolve, 2000));
                 }
@@ -658,20 +648,11 @@ HTML_CONTENT = """<!DOCTYPE html>
             });
         }
 
-        // ================= UPDATED LOAD HISTORY WITH AUTO-TOKEN REFRESH =================
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
-                // Fresh Token fetch kar rahe hain taaki history load hone me auth error na aaye
-                if (auth.currentUser) {
-                    idToken = await auth.currentUser.getIdToken(true);
-                }
-
                 var res = await fetchAuth("/api/history");
-                
-                if(!res.ok) {
-                    throw new Error("HTTP error " + res.status);
-                }
+                if(!res.ok) throw new Error("HTTP error " + res.status);
 
                 var list = await res.json();
                 historyDataList = list || [];
@@ -760,8 +741,6 @@ HTML_CONTENT = """<!DOCTYPE html>
 async def serve_ui():
     return HTML_CONTENT
 
-# ================= AI HTML Route =================
-
 @app.get("/ai.html", response_class=HTMLResponse)
 async def serve_ai_page():
     if os.path.exists("ai.html"):
@@ -810,7 +789,7 @@ async def create_metric(
     description = payload.get("description", "").strip()
 
     if not key or not label or not description:
-        raise HTTPException(status_code=400, detail="All fields (key, label, description) are required.")
+        raise HTTPException(status_code=400, detail="All fields are required.")
 
     existing = db.collection("metrics").where("key", "==", key).get()
     if len(existing) > 0:
@@ -836,7 +815,7 @@ async def update_metric(
     description = payload.get("description", "").strip()
 
     if not label or not description:
-        raise HTTPException(status_code=400, detail="Fields (label, description) are required.")
+        raise HTTPException(status_code=400, detail="Fields label & description are required.")
 
     db.collection("metrics").document(metric_id).update({
         "label": label,
@@ -855,8 +834,7 @@ async def delete_metric(
     db.collection("metrics").document(metric_id).delete()
     return {"status": "success"}
 
-
-# ================= Transcribe & Analyze =================
+# ================= Transcribe & Evaluate Core Logic =================
 
 def transcribe_bytes(audio_bytes):
     url = "https://api.deepgram.com/v1/listen?model=nova-2&language=hi&detect_language=true&diarize=true&punctuate=true&utterances=true"
@@ -885,8 +863,6 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= OpenRouter Evaluation Function =================
-
 def evaluate_quality(transcript, metrics_list):
     url = "https://openrouter.ai/api/v1/chat/completions"
     
@@ -910,7 +886,7 @@ def evaluate_quality(transcript, metrics_list):
     Transcript:
     {json.dumps(transcript, indent=2)}
 
-    Return JSON strictly matching this schema format ONLY (No extra explanation, no markdown formatting outside json):
+    Return JSON strictly matching this schema format ONLY (No extra text, no markdown block outside json):
     {{
         "overall_score": 85,
         "summary": "Detailed call summary...",
@@ -929,25 +905,29 @@ def evaluate_quality(transcript, metrics_list):
 
     payload = {
         "model": OPENROUTER_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+        "messages": [{"role": "user", "content": prompt}]
     }
 
-    response = requests.post(url, headers=headers, json=payload, timeout=60)
-    
-    if response.status_code != 200:
-        raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
+    max_retries = 6
+    retry_delay = 5
+
+    for attempt in range(max_retries):
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
         
-    res_data = response.json()
-    openrouter_raw_text = res_data['choices'][0]['message']['content']
-    
-    # Markdown symbols (```json ... ```) safai
-    clean_json = re.sub(r'```(?:json)?\n?', '', openrouter_raw_text).replace('```', '').strip()
-    return json.loads(clean_json)
+        if response.status_code == 200:
+            res_data = response.json()
+            openrouter_raw_text = res_data['choices'][0]['message']['content']
+            clean_json = re.sub(r'```(?:json)?\n?', '', openrouter_raw_text).replace('```', '').strip()
+            return json.loads(clean_json)
+        
+        elif response.status_code == 429:
+            print(f"⚠️ OpenRouter 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            time.sleep(retry_delay)
+            retry_delay *= 2  # Exponential backoff
+        else:
+            raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
+
+    raise Exception("OpenRouter Rate Limit Exceeded after maximum retries.")
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -975,13 +955,16 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
         return {"status": "success", "filename": file.filename, "data": {"metrics": metrics, "transcript": transcript, "evaluation": evaluation}}
     except Exception as e:
+        print(f"❌ Error processing {file.filename}: {str(e)}")
         return {"status": "error", "filename": file.filename, "error": str(e)}
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
+        await asyncio.sleep(2.5)  # Throttle to prevent rate limits
         return await process_single_file(file, active_metrics)
 
-# Batch Processing Endpoint (Protected)
+# ================= Batch Analysis & History APIs =================
+
 @app.post("/api/analyze-batch")
 async def analyze_audio_batch(
     files: List[UploadFile] = File(...),
@@ -997,14 +980,12 @@ async def analyze_audio_batch(
     results = await asyncio.gather(*tasks)
     return {"results": results}
 
-# History Fetch Endpoint (Protected)
 @app.get("/api/history")
 async def get_history(user: dict = Depends(verify_firebase_token)):
     if not db:
-        print("❌ Firebase DB Object is None in /api/history")
         return []
     try:
-        docs = db.collection("audits").limit(50).stream()
+        docs = db.collection("audits").limit(100).stream()
         history = []
         for doc in docs:
             data = doc.to_dict()

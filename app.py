@@ -1,7 +1,6 @@
-import os
+Import os
 import json
 import re
-import time
 import asyncio
 import requests
 from typing import List, Dict, Any, Optional
@@ -47,7 +46,7 @@ DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 # Active Free Model
-OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
+OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
 
 semaphore = asyncio.Semaphore(2)
 
@@ -522,7 +521,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= FAST OPTIMIZED BATCH FUNCTION =================
+        // ================= CHUNKING & AUTO-TOKEN REFRESH BATCH FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -533,9 +532,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            
-            // Speed fast karne ke liye ek saath 2 files bhej rahe hain
-            const CHUNK_SIZE = 2;
+            const CHUNK_SIZE = 2; // Ek baar mein 2 files process hongi (Render timeout se bachne ke liye)
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -543,6 +540,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 chunk.forEach(file => formData.append("files", file));
 
                 try {
+                    // Fresh token fetch kar rahe hain taaki token expire issue na aaye
                     if (auth.currentUser) {
                         idToken = await auth.currentUser.getIdToken(true);
                     }
@@ -560,9 +558,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                     console.error("Batch processing error:", err);
                 }
 
-                // Backend retry logic heavy lifting handle karega, yahan sirf 1 sec ka smooth delay hai
+                // OpenRouter Free Rate Limits (RPM) se bachne ke liye 2 second ka gap
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
 
@@ -664,6 +662,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
+                // Fresh Token fetch kar rahe hain taaki history load hone me auth error na aaye
                 if (auth.currentUser) {
                     idToken = await auth.currentUser.getIdToken(true);
                 }
@@ -886,7 +885,7 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= OpenRouter Evaluation Function (With Smart Retries) =================
+# ================= OpenRouter Evaluation Function =================
 
 def evaluate_quality(transcript, metrics_list):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -938,24 +937,17 @@ def evaluate_quality(transcript, metrics_list):
         ]
     }
 
-    # Smart Retry logic added to auto-recover from 429 Token Rate Limits
-    max_retries = 4
-    for attempt in range(max_retries):
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    
+    if response.status_code != 200:
+        raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
         
-        if response.status_code == 200:
-            res_data = response.json()
-            openrouter_raw_text = res_data['choices'][0]['message']['content']
-            clean_json = re.sub(r'```(?:json)?\n?', '', openrouter_raw_text).replace('```', '').strip()
-            return json.loads(clean_json)
-        
-        elif response.status_code == 429:
-            print(f"⚠️ Rate limit hit! Retrying in 6s... (Attempt {attempt+1}/{max_retries})")
-            time.sleep(6)
-        else:
-            raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
-            
-    raise Exception("Rate limit retry count exceeded.")
+    res_data = response.json()
+    openrouter_raw_text = res_data['choices'][0]['message']['content']
+    
+    # Markdown symbols (```json ... ```) safai
+    clean_json = re.sub(r'```(?:json)?\n?', '', openrouter_raw_text).replace('```', '').strip()
+    return json.loads(clean_json)
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -1034,3 +1026,7 @@ async def get_history(user: dict = Depends(verify_firebase_token)):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+
+Esme

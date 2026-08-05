@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 import asyncio
 import requests
 from typing import List, Dict, Any, Optional
@@ -521,7 +522,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= UPDATED BATCH FUNCTION WITH SOLUTION 1 (5s DELAY & CHUNK=1) =================
+        // ================= FAST OPTIMIZED BATCH FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -533,8 +534,8 @@ HTML_CONTENT = """<!DOCTYPE html>
             
             currentBatchResults = [];
             
-            // Chunk size 1 kiya gaya hai taaki Google AI Studio ki 16k token limit cross na ho
-            const CHUNK_SIZE = 1;
+            // Speed fast karne ke liye ek saath 2 files bhej rahe hain
+            const CHUNK_SIZE = 2;
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -542,7 +543,6 @@ HTML_CONTENT = """<!DOCTYPE html>
                 chunk.forEach(file => formData.append("files", file));
 
                 try {
-                    // Fresh token fetch kar rahe hain taaki auth expire issue na aaye
                     if (auth.currentUser) {
                         idToken = await auth.currentUser.getIdToken(true);
                     }
@@ -560,9 +560,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                     console.error("Batch processing error:", err);
                 }
 
-                // Solution 1: Google AI Studio 16k Token Limit se bachne ke liye 5 second (5000ms) ka delay
+                // Backend retry logic heavy lifting handle karega, yahan sirf 1 sec ka smooth delay hai
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
 
@@ -664,7 +664,6 @@ HTML_CONTENT = """<!DOCTYPE html>
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
-                // Fresh Token fetch kar rahe hain taaki history load hone me auth error na aaye
                 if (auth.currentUser) {
                     idToken = await auth.currentUser.getIdToken(true);
                 }
@@ -887,7 +886,7 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= OpenRouter Evaluation Function =================
+# ================= OpenRouter Evaluation Function (With Smart Retries) =================
 
 def evaluate_quality(transcript, metrics_list):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -939,17 +938,24 @@ def evaluate_quality(transcript, metrics_list):
         ]
     }
 
-    response = requests.post(url, headers=headers, json=payload, timeout=60)
-    
-    if response.status_code != 200:
-        raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
+    # Smart Retry logic added to auto-recover from 429 Token Rate Limits
+    max_retries = 4
+    for attempt in range(max_retries):
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
         
-    res_data = response.json()
-    openrouter_raw_text = res_data['choices'][0]['message']['content']
-    
-    # Markdown symbols (```json ... ```) safai
-    clean_json = re.sub(r'```(?:json)?\n?', '', openrouter_raw_text).replace('```', '').strip()
-    return json.loads(clean_json)
+        if response.status_code == 200:
+            res_data = response.json()
+            openrouter_raw_text = res_data['choices'][0]['message']['content']
+            clean_json = re.sub(r'```(?:json)?\n?', '', openrouter_raw_text).replace('```', '').strip()
+            return json.loads(clean_json)
+        
+        elif response.status_code == 429:
+            print(f"⚠️ Rate limit hit! Retrying in 6s... (Attempt {attempt+1}/{max_retries})")
+            time.sleep(6)
+        else:
+            raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
+            
+    raise Exception("Rate limit retry count exceeded.")
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:

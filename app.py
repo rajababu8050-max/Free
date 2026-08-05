@@ -736,6 +736,8 @@ HTML_CONTENT = """<!DOCTYPE html>
             html2pdf().from(element).save("Batch_Call_Audit_Report.pdf");
         }
     </script>
+
+    <p>discrimer: only education and testing purpose</p>
 </body>
 </html>
 """

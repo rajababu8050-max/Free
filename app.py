@@ -59,7 +59,7 @@ def get_next_groq_key():
         return next(key_cycle)
     return ""
 
-GROQ_MODEL = "​llama-3.3-70b-versatile"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # Rate Limit Safe Concurrency: Up to 2 files processed simultaneously
 semaphore = asyncio.Semaphore(2)

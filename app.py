@@ -45,7 +45,6 @@ else:
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
 # ================= Groq High-Speed API Key Rotation Setup =================
-# Comma-separated keys in Render: GROQ_KEYS="gsk_key1,gsk_key2,gsk_key3"
 raw_groq_keys = os.environ.get("GROQ_KEYS", os.environ.get("GROQ_API_KEY", ""))
 GROQ_KEYS = [k.strip() for k in raw_groq_keys.split(",") if k.strip()]
 
@@ -681,6 +680,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             });
         }
 
+        // ================= UPDATED SAFE HISTORY LOADING =================
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
@@ -689,8 +689,11 @@ HTML_CONTENT = """<!DOCTYPE html>
                     return;
                 }
 
+                // Force refresh ID token before history request
+                idToken = await auth.currentUser.getIdToken(true);
                 var res = await fetchAuth("/api/history");
-                
+
+                // If 401 Unauthorized occurs, retry once with fresh token
                 if (res.status === 401) {
                     idToken = await auth.currentUser.getIdToken(true);
                     res = await fetchAuth("/api/history");
@@ -978,7 +981,7 @@ def evaluate_quality(transcript, metrics_list):
         elif response.status_code == 429:
             print(f"⚠️ Groq 429 Rate Limit hit. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay += 3  # Exponential Backoff
+            retry_delay += 3
         else:
             raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
@@ -1015,7 +1018,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(0.8)  # Safe buffer delay for Groq rate limits reset
+        await asyncio.sleep(0.8)
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================
@@ -1035,6 +1038,7 @@ async def analyze_audio_batch(
     results = await asyncio.gather(*tasks)
     return {"results": results}
 
+# ================= UPDATED SAFE GET HISTORY ENDPOINT =================
 @app.get("/api/history")
 async def get_history(user: dict = Depends(verify_firebase_token)):
     if not db:
@@ -1044,16 +1048,18 @@ async def get_history(user: dict = Depends(verify_firebase_token)):
         history = []
         for doc in docs:
             data = doc.to_dict()
-            history.append({
-                "filename": data.get("filename", "Unknown"),
-                "score": data.get("score", 0),
-                "summary": data.get("summary", ""),
-                "evaluated_metrics": data.get("evaluated_metrics", {}),
-                "wpm": data.get("wpm", 0),
-                "created_at": data.get("created_at", "")
-            })
+            if data:
+                history.append({
+                    "filename": data.get("filename", "Unknown"),
+                    "score": data.get("score", 0),
+                    "summary": data.get("summary", ""),
+                    "evaluated_metrics": data.get("evaluated_metrics", {}),
+                    "wpm": data.get("wpm", 0),
+                    "created_at": data.get("created_at", "")
+                })
         
-        history.sort(key=lambda x: x["created_at"], reverse=True)
+        # In-memory sorting to prevent index errors
+        history.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
         return history
     except Exception as e:
         print("❌ Firebase Fetch Error:", str(e))

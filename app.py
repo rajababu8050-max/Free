@@ -46,7 +46,7 @@ DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 # Active Free Model
-OPENROUTER_MODEL = "nvidia/nemotron-nano-9b-v2:free"
+OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
 
 semaphore = asyncio.Semaphore(2)
 

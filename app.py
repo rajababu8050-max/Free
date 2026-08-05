@@ -43,14 +43,14 @@ else:
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# ================= Groq API Setup (High Accuracy Setup) =================
+# ================= Groq API Setup (High Speed Setup) =================
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
-# High accuracy 70B Parameter model
-GROQ_MODEL = "llama-3.3-70b-versatile"
+# Fast & High Throughput Model (5x faster than 70B)
+GROQ_MODEL = "llama-3.1-8b-instant"
 
-# Rate Limit Avoidance: Strictly process 1 request at a time to prevent 429 Free/Tier-1 crashes
-semaphore = asyncio.Semaphore(1)
+# Increased Concurrency: Process up to 3 files simultaneously
+semaphore = asyncio.Semaphore(3)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -192,12 +192,12 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Browse Files
                     </button>
                     <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
-                        Start Batch Analysis
+                        Start Fast Batch Analysis
                     </button>
                 </div>
             </div>
             <div id="loader" class="hidden mt-4 text-xs text-blue-400 animate-pulse font-medium">
-                ⏳ Auditing speech, analyzing metrics & generating summary... Please wait...
+                ⚡ Rapid Auditing speech, analyzing metrics & generating summary... Please wait...
             </div>
         </div>
 
@@ -387,7 +387,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         async function fetchAuth(url, options = {}) {
             if (!options.headers) options.headers = {};
             if (auth.currentUser) {
-                idToken = await auth.currentUser.getIdToken(true); // Force token refresh on every request
+                idToken = await auth.currentUser.getIdToken(true);
             }
             options.headers['Authorization'] = 'Bearer ' + idToken;
             return fetch(url, options);
@@ -519,7 +519,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= RATE LIMIT PROTECTED SEQUENTIAL BATCH UPLOAD =================
+        // ================= FAST BATCH UPLOAD FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -530,7 +530,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 1; // Strictly 1 file at a time to keep Groq API stable
+            const CHUNK_SIZE = 3; // Process 3 files per batch parallelly for maximum speed
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -551,9 +551,8 @@ HTML_CONTENT = """<!DOCTYPE html>
                     console.error("Batch processing error:", err);
                 }
 
-                // Smooth delay between file processing to prevent Groq API rate limits
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
             }
 
@@ -877,7 +876,7 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= Groq High Accuracy Evaluation Function (Deterministic & Rate-Limit Safe) =================
+# ================= Groq Fast Evaluation Function =================
 
 def evaluate_quality(transcript, metrics_list):
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -930,8 +929,8 @@ def evaluate_quality(transcript, metrics_list):
         "top_p": 1.0
     }
 
-    max_retries = 8
-    retry_delay = 5
+    max_retries = 5
+    retry_delay = 3
 
     for attempt in range(max_retries):
         response = requests.post(url, headers=headers, json=payload, timeout=60)
@@ -945,7 +944,7 @@ def evaluate_quality(transcript, metrics_list):
         elif response.status_code == 429:
             print(f"⚠️ Groq 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay += 3
+            retry_delay += 2
         else:
             raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
@@ -982,7 +981,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(2)
+        await asyncio.sleep(0.5)  # Fast 0.5s buffer
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

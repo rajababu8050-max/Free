@@ -3,7 +3,6 @@ import json
 import re
 import time
 import asyncio
-import requests
 import itertools
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -12,9 +11,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Body, Request, Dep
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-
-import firebase_admin
-from firebase_admin import credentials, firestore, auth
+import requests
 
 app = FastAPI()
 
@@ -44,17 +41,17 @@ else:
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# ================= Google Gemini Multi-Key Rotation Setup =================
+# ================= Google GEMINI_KEYS Setup =================
 raw_gemini_keys = os.environ.get("GEMINI_KEYS", os.environ.get("GEMINI_API_KEY", ""))
 GEMINI_KEYS = [k.strip() for k in raw_gemini_keys.split(",") if k.strip()]
 
 if not GEMINI_KEYS:
-    print("⚠️ Warning: No GEMINI_KEYS or GEMINI_API_KEY found in environment variables!")
+    print("⚠️ Warning: No GEMINI_KEYS found in Render environment variables!")
 
 gemini_key_cycle = itertools.cycle(GEMINI_KEYS) if GEMINI_KEYS else None
 
 def get_next_gemini_key():
-    """Rotates through available Gemini API Keys"""
+    """Rotates through GEMINI_KEYS sequentially"""
     if gemini_key_cycle:
         return next(gemini_key_cycle)
     return ""
@@ -168,7 +165,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
                     AI Call Quality Auditor Pro
                 </h1>
-                <p class="text-sub text-sm">Pharma Metrics Evaluation & Bulk Quality Auditing (Gemini AI Engine)</p>
+                <p class="text-sub text-sm">Pharma Metrics Evaluation & Bulk Quality Auditing (GEMINI_KEYS Engine)</p>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
                 <a href="/ai.html" class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold px-4 py-2 rounded-xl text-xs sm:text-sm shadow-lg shadow-purple-500/30 flex items-center gap-2 transform hover:-translate-y-0.5 transition duration-200 border border-purple-400/30">
@@ -901,14 +898,16 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= Fixed Gemini API Evaluation Function =================
+# ================= Direct Standard REST Call for GEMINI_KEYS =================
 
 def evaluate_quality(transcript, metrics_list):
     active_key = get_next_gemini_key()
-    
-    # Official working Gemini 1.5 Flash Endpoint
+    if not active_key:
+        raise Exception("Gemini API Key missing! Please set GEMINI_KEYS variable in Render.")
+
+    # Standard endpoint structure that avoids 404
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_key}"
-    
+
     evaluated_metrics_json = {}
     metric_instructions = []
 
@@ -945,7 +944,6 @@ def evaluate_quality(transcript, metrics_list):
     """
 
     headers = {"Content-Type": "application/json"}
-
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -967,11 +965,11 @@ def evaluate_quality(transcript, metrics_list):
             return json.loads(clean_json)
         
         elif response.status_code == 429:
-            print(f"⚠️ Gemini 429 Rate Limit hit. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            print(f"⚠️ Gemini 429 Rate Limit hit on key. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
             retry_delay += 3
         else:
-            raise Exception(f"Gemini Error ({response.status_code}): {response.text}")
+            raise Exception(f"Gemini API Error ({response.status_code}): {response.text}")
 
     raise Exception("Gemini Rate Limit Exceeded after maximum retries.")
 

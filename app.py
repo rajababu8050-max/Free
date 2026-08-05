@@ -43,14 +43,14 @@ else:
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# ================= Groq API Setup =================
+# ================= Groq API Setup (High Accuracy Setup) =================
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
-# Groq ultra-fast & high-limit model
-GROQ_MODEL = "llama-3.1-8b-instant"
+# High accuracy 70B Parameter model
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Increased Concurrency: Groq supports high RPM
-semaphore = asyncio.Semaphore(3)
+# Optimal concurrency for 70B model rate limits
+semaphore = asyncio.Semaphore(2)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -530,7 +530,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 3; // Processing 3 files at once for faster Groq execution
+            const CHUNK_SIZE = 2; // Optimal 2 files per batch for high accuracy 70b model
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -552,7 +552,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 }
 
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 1500));
                 }
             }
 
@@ -865,7 +865,7 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= Groq Evaluation Function =================
+# ================= Groq High Accuracy Evaluation Function =================
 
 def evaluate_quality(transcript, metrics_list):
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -912,7 +912,7 @@ def evaluate_quality(transcript, metrics_list):
     }
 
     max_retries = 5
-    retry_delay = 3
+    retry_delay = 4
 
     for attempt in range(max_retries):
         response = requests.post(url, headers=headers, json=payload, timeout=60)
@@ -963,7 +963,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(0.5)  # Fast processing delay
+        await asyncio.sleep(1)  # Smooth delay for 70b model
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

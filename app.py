@@ -768,6 +768,7 @@ async def serve_ai_page():
             <h1>✨ AI Quality Score Page</h1>
             <p>Apni <b>ai.html</b> file ko same folder me rakhein!</p>
             <a href="/" style="color:#38bdf8;">← Back to Home</a>
+            <p>disclaimer: only for education and testing purpose</p>
         </body>
         </html>
         """

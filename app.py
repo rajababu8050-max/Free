@@ -43,14 +43,14 @@ else:
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# ================= Groq API Setup (High Speed Setup) =================
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+# ================= OpenRouter API Setup (Free GPT Model) =================
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-# Fast & High Throughput Model (5x faster than 70B)
-GROQ_MODEL = "llama-3.1-8b-instant"
+# Free OpenAI Open-Weight GPT Model
+OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
 
-# Increased Concurrency: Process up to 3 files simultaneously
-semaphore = asyncio.Semaphore(3)
+# Rate Limit Safety: Process up to 2 files concurrently for OpenRouter Free Tier
+semaphore = asyncio.Semaphore(2)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -192,12 +192,12 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Browse Files
                     </button>
                     <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
-                        Start Fast Batch Analysis
+                        Start Batch Analysis
                     </button>
                 </div>
             </div>
             <div id="loader" class="hidden mt-4 text-xs text-blue-400 animate-pulse font-medium">
-                ⚡ Rapid Auditing speech, analyzing metrics & generating summary... Please wait...
+                ⚡ Auditing speech, analyzing metrics with OpenRouter GPT & generating summary... Please wait...
             </div>
         </div>
 
@@ -519,7 +519,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= FAST BATCH UPLOAD FUNCTION =================
+        // ================= BATCH UPLOAD FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -530,7 +530,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 3; // Process 3 files per batch parallelly for maximum speed
+            const CHUNK_SIZE = 2; // Process 2 files per batch to remain safely within OpenRouter Free Limits
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -552,7 +552,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 }
 
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
 
@@ -876,10 +876,10 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= Groq Fast Evaluation Function =================
+# ================= OpenRouter Free GPT Evaluation Function =================
 
 def evaluate_quality(transcript, metrics_list):
-    url = "https://api.groq.com/openai/v1/chat/completions"
+    url = "https://openrouter.ai/api/v1/chat/completions"
     
     evaluated_metrics_json = {}
     metric_instructions = []
@@ -917,38 +917,39 @@ def evaluate_quality(transcript, metrics_list):
     """
 
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "http://localhost:8000",
+        "X-Title": "AI Call Quality Auditor",
         "Content-Type": "application/json"
     }
 
     payload = {
-        "model": GROQ_MODEL,
+        "model": OPENROUTER_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "response_format": {"type": "json_object"},
-        "temperature": 0.0,
-        "top_p": 1.0
+        "temperature": 0.0
     }
 
-    max_retries = 5
-    retry_delay = 3
+    max_retries = 6
+    retry_delay = 4
 
     for attempt in range(max_retries):
         response = requests.post(url, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             res_data = response.json()
-            groq_raw_text = res_data['choices'][0]['message']['content']
-            clean_json = re.sub(r'```(?:json)?\n?', '', groq_raw_text).replace('```', '').strip()
+            raw_text = res_data['choices'][0]['message']['content']
+            clean_json = re.sub(r'```(?:json)?\n?', '', raw_text).replace('```', '').strip()
             return json.loads(clean_json)
         
         elif response.status_code == 429:
-            print(f"⚠️ Groq 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            print(f"⚠️ OpenRouter 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay += 2
+            retry_delay += 3
         else:
-            raise Exception(f"Groq Error ({response.status_code}): {response.text}")
+            raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
 
-    raise Exception("Groq Rate Limit Exceeded after maximum retries.")
+    raise Exception("OpenRouter Rate Limit Exceeded after maximum retries.")
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -981,7 +982,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(0.5)  # Fast 0.5s buffer
+        await asyncio.sleep(1.0)  # Safe buffer delay for OpenRouter Free Tier
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

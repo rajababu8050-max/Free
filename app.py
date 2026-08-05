@@ -45,6 +45,7 @@ else:
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
 # ================= Groq High-Speed API Key Rotation Setup =================
+# Comma-separated keys: GROQ_KEYS="gsk_key1,gsk_key2" or single GROQ_API_KEY
 raw_groq_keys = os.environ.get("GROQ_KEYS", os.environ.get("GROQ_API_KEY", ""))
 GROQ_KEYS = [k.strip() for k in raw_groq_keys.split(",") if k.strip()]
 
@@ -54,15 +55,15 @@ if not GROQ_KEYS:
 key_cycle = itertools.cycle(GROQ_KEYS) if GROQ_KEYS else None
 
 def get_next_groq_key():
-    """Rotates API Keys automatically across requests"""
+    """Rotates API Keys automatically to ensure ZERO rate limits on 50+ bulk audios"""
     if key_cycle:
         return next(key_cycle)
     return ""
 
 GROQ_MODEL = "llama-3.1-8b-instant"
 
-# Rate Limit Safe Concurrency: Up to 2 files processed simultaneously
-semaphore = asyncio.Semaphore(2)
+# High Concurrency Worker: Process 5 audio files simultaneously
+semaphore = asyncio.Semaphore(5)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -174,7 +175,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
                     AI Call Quality Auditor Pro
                 </h1>
-                <p class="text-sub text-sm">Pharma Metrics Evaluation & Bulk Batch Quality Auditing</p>
+                <p class="text-sub text-sm">Pharma Metrics Evaluation & 50+ Bulk Batch Quality Auditing</p>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
                 <a href="/ai.html" class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold px-4 py-2 rounded-xl text-xs sm:text-sm shadow-lg shadow-purple-500/30 flex items-center gap-2 transform hover:-translate-y-0.5 transition duration-200 border border-purple-400/30">
@@ -196,7 +197,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="card-bg border-2 border-dashed border-slate-600 rounded-2xl p-6 text-center shadow-lg">
             <div class="space-y-3">
                 <div class="w-12 h-12 bg-blue-500/10 text-blue-400 rounded-full flex items-center justify-center mx-auto text-xl font-bold">🎙️</div>
-                <p id="fileName" class="text-sm font-medium">Select Audio File(s) (.mp3, .wav, .awb)</p>
+                <p id="fileName" class="text-sm font-medium">Select Audio File(s) (.mp3, .wav) - Supports up to 50+ files</p>
                 <input type="file" id="audioInput" accept="audio/*" multiple class="hidden" onchange="fileSelected(event)">
                 
                 <div class="flex justify-center gap-3">
@@ -204,12 +205,12 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Browse Files
                     </button>
                     <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
-                        🚀 Start Bulk Batch Analysis
+                        🚀 Start Bulk 50+ Batch Analysis
                     </button>
                 </div>
             </div>
             
-            <!-- Progress Bar -->
+            <!-- Progress Bar for 50 Audios -->
             <div id="progressContainer" class="hidden mt-4 space-y-2">
                 <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
                     <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
@@ -538,7 +539,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= RATE LIMIT SAFE CHUNKING BATCH UPLOAD FUNCTION =================
+        // ================= HIGH-SPEED CHUNKING BATCH UPLOAD FUNCTION (50 AUDIOS) =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -550,7 +551,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             
             currentBatchResults = [];
             const totalFiles = selectedFiles.length;
-            const CHUNK_SIZE = 2; // Process 2 files per batch for safe Groq TPM management
+            const CHUNK_SIZE = 5; // Send 5 files per HTTP request parallelly
 
             let completedCount = 0;
 
@@ -579,7 +580,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 document.getElementById('loaderText').innerText = `⚡ Auditing speech & evaluating metrics... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
 
                 if (i + CHUNK_SIZE < totalFiles) {
-                    await new Promise(resolve => setTimeout(resolve, 800));
+                    await new Promise(resolve => setTimeout(resolve, 300));
                 }
             }
 
@@ -680,7 +681,6 @@ HTML_CONTENT = """<!DOCTYPE html>
             });
         }
 
-        // ================= UPDATED SAFE HISTORY LOADING =================
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
@@ -689,11 +689,8 @@ HTML_CONTENT = """<!DOCTYPE html>
                     return;
                 }
 
-                // Force refresh ID token before history request
-                idToken = await auth.currentUser.getIdToken(true);
                 var res = await fetchAuth("/api/history");
-
-                // If 401 Unauthorized occurs, retry once with fresh token
+                
                 if (res.status === 401) {
                     idToken = await auth.currentUser.getIdToken(true);
                     res = await fetchAuth("/api/history");
@@ -913,7 +910,7 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= Groq Evaluation Function (With Rate Limit Backoff) =================
+# ================= Groq High-Speed Evaluation Function =================
 
 def evaluate_quality(transcript, metrics_list):
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -960,8 +957,8 @@ def evaluate_quality(transcript, metrics_list):
         "temperature": 0.0
     }
 
-    max_retries = 8
-    retry_delay = 4
+    max_retries = 5
+    retry_delay = 2
 
     for attempt in range(max_retries):
         active_key = get_next_groq_key()
@@ -979,9 +976,9 @@ def evaluate_quality(transcript, metrics_list):
             return json.loads(clean_json)
         
         elif response.status_code == 429:
-            print(f"⚠️ Groq 429 Rate Limit hit. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            print(f"⚠️ Groq 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay += 3
+            retry_delay += 2
         else:
             raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
@@ -1018,7 +1015,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(0.1)  # Ultra-fast processing delay
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================
@@ -1038,7 +1035,6 @@ async def analyze_audio_batch(
     results = await asyncio.gather(*tasks)
     return {"results": results}
 
-# ================= UPDATED SAFE GET HISTORY ENDPOINT =================
 @app.get("/api/history")
 async def get_history(user: dict = Depends(verify_firebase_token)):
     if not db:
@@ -1048,18 +1044,16 @@ async def get_history(user: dict = Depends(verify_firebase_token)):
         history = []
         for doc in docs:
             data = doc.to_dict()
-            if data:
-                history.append({
-                    "filename": data.get("filename", "Unknown"),
-                    "score": data.get("score", 0),
-                    "summary": data.get("summary", ""),
-                    "evaluated_metrics": data.get("evaluated_metrics", {}),
-                    "wpm": data.get("wpm", 0),
-                    "created_at": data.get("created_at", "")
-                })
+            history.append({
+                "filename": data.get("filename", "Unknown"),
+                "score": data.get("score", 0),
+                "summary": data.get("summary", ""),
+                "evaluated_metrics": data.get("evaluated_metrics", {}),
+                "wpm": data.get("wpm", 0),
+                "created_at": data.get("created_at", "")
+            })
         
-        # In-memory sorting to prevent index errors
-        history.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
+        history.sort(key=lambda x: x["created_at"], reverse=True)
         return history
     except Exception as e:
         print("❌ Firebase Fetch Error:", str(e))

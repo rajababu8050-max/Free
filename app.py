@@ -43,14 +43,14 @@ else:
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# ================= Groq API Setup (High Accuracy Setup) =================
+# ================= Groq API Setup (Deterministic High Accuracy) =================
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 # High accuracy 70B Parameter model
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Optimal concurrency for 70B model rate limits
-semaphore = asyncio.Semaphore(2)
+# Concurrency set to 1 for 100% safe rate limits with 48 files
+semaphore = asyncio.Semaphore(1)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -530,7 +530,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 2; // Optimal 2 files per batch for high accuracy 70b model
+            const CHUNK_SIZE = 2; // Safe batch size for rate limits
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -552,7 +552,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 }
 
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
 
@@ -908,11 +908,12 @@ def evaluate_quality(transcript, metrics_list):
     payload = {
         "model": GROQ_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"}
+        "response_format": {"type": "json_object"},
+        "temperature": 0.0  # <--- Exact same deterministic output & scores
     }
 
-    max_retries = 5
-    retry_delay = 4
+    max_retries = 6
+    retry_delay = 5
 
     for attempt in range(max_retries):
         response = requests.post(url, headers=headers, json=payload, timeout=60)
@@ -963,7 +964,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(1)  # Smooth delay for 70b model
+        await asyncio.sleep(2)  # Safe delay to complete all 48 files without 429
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

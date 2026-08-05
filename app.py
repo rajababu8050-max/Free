@@ -349,7 +349,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         auth.onAuthStateChanged(async (user) => {
             if (user) {
-                idToken = await user.getIdToken();
+                idToken = await user.getIdToken(true);
                 document.getElementById('authModal').classList.add('hidden');
                 document.getElementById('dashboardContent').classList.remove('hidden');
                 fetchMetrics();
@@ -387,7 +387,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         async function fetchAuth(url, options = {}) {
             if (!options.headers) options.headers = {};
             if (auth.currentUser) {
-                idToken = await auth.currentUser.getIdToken(true); // Always fetch fresh token
+                idToken = await auth.currentUser.getIdToken(true); // Force token refresh on every request
             }
             options.headers['Authorization'] = 'Bearer ' + idToken;
             return fetch(url, options);
@@ -654,7 +654,18 @@ HTML_CONTENT = """<!DOCTYPE html>
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
+                if (!auth.currentUser) {
+                    hTable.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-rose-500">Please sign in again. Session expired.</td></tr>';
+                    return;
+                }
+
                 var res = await fetchAuth("/api/history");
+                
+                if (res.status === 401) {
+                    idToken = await auth.currentUser.getIdToken(true);
+                    res = await fetchAuth("/api/history");
+                }
+
                 if(!res.ok) throw new Error("HTTP error " + res.status);
 
                 var list = await res.json();
@@ -736,8 +747,6 @@ HTML_CONTENT = """<!DOCTYPE html>
             html2pdf().from(element).save("Batch_Call_Audit_Report.pdf");
         }
     </script>
-
-    <p>discrimer: only education and testing purpose</p>
 </body>
 </html>
 """
@@ -913,7 +922,6 @@ def evaluate_quality(transcript, metrics_list):
         "Content-Type": "application/json"
     }
 
-    # Added temperature=0.0 to enforce strict deterministic scoring output across identical files
     payload = {
         "model": GROQ_MODEL,
         "messages": [{"role": "user", "content": prompt}],
@@ -937,7 +945,7 @@ def evaluate_quality(transcript, metrics_list):
         elif response.status_code == 429:
             print(f"⚠️ Groq 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay += 3  # Gradual backoff delay
+            retry_delay += 3
         else:
             raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
@@ -974,7 +982,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(2)  # Delay between requests to keep API smooth
+        await asyncio.sleep(2)
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================
@@ -999,7 +1007,7 @@ async def get_history(user: dict = Depends(verify_firebase_token)):
     if not db:
         return []
     try:
-        docs = db.collection("audits").limit(100).stream()
+        docs = db.collection("audits").limit(50).stream()
         history = []
         for doc in docs:
             data = doc.to_dict()

@@ -3,6 +3,7 @@ import json
 import re
 import time
 import asyncio
+import requests
 import itertools
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -11,7 +12,6 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Body, Request, Dep
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import requests
 
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
@@ -44,23 +44,27 @@ else:
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# ================= Gemini 3.6 Flash Multi-Key Rotation Setup =================
-raw_gemini_keys = os.environ.get("GEMINI_KEYS", os.environ.get("GEMINI_API_KEY", ""))
-GEMINI_KEYS = [k.strip() for k in raw_gemini_keys.split(",") if k.strip()]
+# ================= Groq High-Speed API Key Rotation Setup =================
+raw_groq_keys = os.environ.get("GROQ_KEYS", os.environ.get("GROQ_API_KEY", ""))
+GROQ_KEYS = [k.strip() for k in raw_groq_keys.split(",") if k.strip()]
 
-if not GEMINI_KEYS:
-    print("⚠️ Warning: No GEMINI_KEYS found in Render environment variables!")
+if not GROQ_KEYS:
+    print("⚠️ Warning: No GROQ_KEYS found in environment variables!")
 
-gemini_key_cycle = itertools.cycle(GEMINI_KEYS) if GEMINI_KEYS else None
+key_cycle = itertools.cycle(GROQ_KEYS) if GROQ_KEYS else None
 
-def get_next_gemini_key():
-    """Rotates through available Gemini API Keys smoothly"""
-    if gemini_key_cycle:
-        return next(gemini_key_cycle)
+def get_next_groq_key():
+    """Rotates API Keys automatically across requests"""
+    if key_cycle:
+        return next(key_cycle)
     return ""
 
+GROQ_MODEL = "llama-3.1-8b-instant"
+
+# Rate Limit Safe Concurrency: Up to 2 files processed simultaneously
 semaphore = asyncio.Semaphore(2)
 
+# Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
     {"key": "upsell_opportunity_available", "label": "Upsell Opportunity Available", "description": "Was there an opportunity to pitch an upsell or add-on product?"},
     {"key": "upsell_pitch_done", "label": "Upsell Pitch Done", "description": "Did the agent attempt an upsell pitch during the call?"},
@@ -71,6 +75,7 @@ DEFAULT_METRICS = [
 ]
 
 def init_default_metrics():
+    """Seed initial metrics if collection is empty"""
     if db:
         try:
             docs = list(db.collection("metrics").limit(1).stream())
@@ -117,6 +122,7 @@ HTML_CONTENT = """<!DOCTYPE html>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
+    <!-- Firebase Web SDK Integration -->
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
 
@@ -168,7 +174,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
                     AI Call Quality Auditor Pro
                 </h1>
-                <p class="text-sub text-sm">Pharma Metrics Evaluation & Bulk Auditing (Gemini 3.6 Flash Engine)</p>
+                <p class="text-sub text-sm">Pharma Metrics Evaluation & Bulk Batch Quality Auditing</p>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
                 <a href="/ai.html" class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold px-4 py-2 rounded-xl text-xs sm:text-sm shadow-lg shadow-purple-500/30 flex items-center gap-2 transform hover:-translate-y-0.5 transition duration-200 border border-purple-400/30">
@@ -190,7 +196,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="card-bg border-2 border-dashed border-slate-600 rounded-2xl p-6 text-center shadow-lg">
             <div class="space-y-3">
                 <div class="w-12 h-12 bg-blue-500/10 text-blue-400 rounded-full flex items-center justify-center mx-auto text-xl font-bold">🎙️</div>
-                <p id="fileName" class="text-sm font-medium">Select Audio File(s) (.mp3, .wav, .awb) - Optimized for 50+ Bulk Audios</p>
+                <p id="fileName" class="text-sm font-medium">Select Audio File(s) (.mp3, .wav, .awb)</p>
                 <input type="file" id="audioInput" accept="audio/*" multiple class="hidden" onchange="fileSelected(event)">
                 
                 <div class="flex justify-center gap-3">
@@ -198,7 +204,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Browse Files
                     </button>
                     <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
-                        🚀 Start Gemini 3.6 Flash Batch Analysis
+                        🚀 Start Bulk Batch Analysis
                     </button>
                 </div>
             </div>
@@ -209,7 +215,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
                 </div>
                 <div id="loaderText" class="text-xs text-blue-400 font-medium">
-                    ⚡ Auditing speech with Gemini 3.6 Flash... 0 / 0 Completed
+                    ⚡ Auditing speech & evaluating metrics... 0 / 0 Completed
                 </div>
             </div>
         </div>
@@ -228,6 +234,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
             </div>
 
+            <!-- Aggregate Summary Table Box -->
             <div id="summaryTableContainer" class="card-bg border border-slate-700 rounded-2xl p-5 shadow-xl space-y-4">
                 <div class="flex justify-between items-center border-b border-slate-700 pb-3">
                     <div>
@@ -282,6 +289,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </table>
             </div>
 
+            <!-- Pagination Controls -->
             <div class="flex justify-between items-center pt-2 text-xs border-t border-slate-700/60">
                 <span id="pageInfoText" class="text-sub font-medium">Page 1 of 1</span>
                 <div class="flex gap-2">
@@ -530,7 +538,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= SMOOTH CHUNK UPLOAD FOR 50+ FILES =================
+        // ================= RATE LIMIT SAFE CHUNKING BATCH UPLOAD FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -542,7 +550,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             
             currentBatchResults = [];
             const totalFiles = selectedFiles.length;
-            const CHUNK_SIZE = 2; // Process 2 files per batch for smooth rate-limit management
+            const CHUNK_SIZE = 2; // Process 2 files per batch for safe Groq TPM management
 
             let completedCount = 0;
 
@@ -568,10 +576,10 @@ HTML_CONTENT = """<!DOCTYPE html>
                 completedCount += chunk.length;
                 const progressPct = Math.round((completedCount / totalFiles) * 100);
                 document.getElementById('progressBar').style.width = progressPct + "%";
-                document.getElementById('loaderText').innerText = `⚡ Auditing speech with Gemini 3.6 Flash... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
+                document.getElementById('loaderText').innerText = `⚡ Auditing speech & evaluating metrics... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
 
                 if (i + CHUNK_SIZE < totalFiles) {
-                    await new Promise(resolve => setTimeout(resolve, 800)); // Smooth inter-chunk pacing
+                    await new Promise(resolve => setTimeout(resolve, 800));
                 }
             }
 
@@ -672,6 +680,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             });
         }
 
+        // ================= UPDATED SAFE HISTORY LOADING =================
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
@@ -680,9 +689,11 @@ HTML_CONTENT = """<!DOCTYPE html>
                     return;
                 }
 
+                // Force refresh ID token before history request
                 idToken = await auth.currentUser.getIdToken(true);
                 var res = await fetchAuth("/api/history");
 
+                // If 401 Unauthorized occurs, retry once with fresh token
                 if (res.status === 401) {
                     idToken = await auth.currentUser.getIdToken(true);
                     res = await fetchAuth("/api/history");
@@ -902,16 +913,11 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= FIXED 100% DETERMINISTIC GEMINI EVALUATION FUNCTION =================
+# ================= Groq Evaluation Function (With Rate Limit Backoff) =================
 
 def evaluate_quality(transcript, metrics_list):
-    active_key = get_next_gemini_key()
-    if not active_key:
-        raise Exception("Gemini API Key missing! Please set GEMINI_KEYS variable in Render.")
-
-    # Official Gemini 3.6 Flash endpoint
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={active_key}"
-
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    
     evaluated_metrics_json = {}
     metric_instructions = []
 
@@ -924,22 +930,20 @@ def evaluate_quality(transcript, metrics_list):
     metrics_guide = "\n".join(metric_instructions)
 
     prompt = f"""
-    You are an extremely strict, deterministic, and objective Quality Assurance Auditor for call analysis.
-    Your evaluation MUST BE 100% CONSISTENT AND REPRODUCIBLE. For the exact same transcript, you MUST ALWAYS output the exact same overall_score.
-
-    EVALUATION INSTRUCTIONS:
-    1. Base Score starts at exactly 100.
-    2. Check the transcript against the evaluated metrics below:
+    Analyze the following audio call transcript and evaluate quality score (0-100) and evaluated metrics.
+    
+    Evaluation Rules for Metrics:
     {metrics_guide}
-    3. Apply STRICT DEDUCTION RULES consistently:
-       - If an expected compliance step/metric is missing or false: Deduct EXACTLY 10 points per missing item.
-       - If agent tone is bad or pitch ineffective: Deduct EXACTLY 15 points.
-       - Do NOT use arbitrary or random point deductions. Calculate: Score = 100 - (Total Deductions).
+
+    Scoring Rule:
+    - Base score is 100.
+    - Deduct fixed points consistently for any agent mistakes or missing compliance.
+    - Be completely objective and deterministic in scoring.
 
     Transcript:
     {json.dumps(transcript, indent=2)}
 
-    Return JSON strictly matching this schema format ONLY (No markdown block, no extra explanation outside JSON):
+    Return JSON strictly matching this schema format ONLY (No extra text, no markdown block outside json):
     {{
         "overall_score": 85,
         "summary": "Detailed call summary...",
@@ -949,36 +953,39 @@ def evaluate_quality(transcript, metrics_list):
     }}
     """
 
-    headers = {"Content-Type": "application/json"}
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "response_mime_type": "application/json",
-            "temperature": 0.0,
-            "seed": 42
-        }
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.0
     }
 
     max_retries = 8
-    retry_delay = 3
+    retry_delay = 4
 
     for attempt in range(max_retries):
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        active_key = get_next_groq_key()
+        headers = {
+            "Authorization": f"Bearer {active_key}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(url, headers=headers, json=payload, timeout=40)
         
         if response.status_code == 200:
             res_data = response.json()
-            raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
+            raw_text = res_data['choices'][0]['message']['content']
             clean_json = re.sub(r'```(?:json)?\n?', '', raw_text).replace('```', '').strip()
             return json.loads(clean_json)
         
         elif response.status_code == 429:
-            print(f"⚠️ Gemini 3.6 Flash 429 Rate Limit hit. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            print(f"⚠️ Groq 429 Rate Limit hit. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
             retry_delay += 3
         else:
-            raise Exception(f"Gemini 3.6 Flash Error ({response.status_code}): {response.text}")
+            raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
-    raise Exception("Gemini 3.6 Flash Rate Limit Exceeded after maximum retries.")
+    raise Exception("Groq Rate Limit Exceeded after maximum retries.")
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -1011,7 +1018,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.8)
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================
@@ -1031,6 +1038,7 @@ async def analyze_audio_batch(
     results = await asyncio.gather(*tasks)
     return {"results": results}
 
+# ================= UPDATED SAFE GET HISTORY ENDPOINT =================
 @app.get("/api/history")
 async def get_history(user: dict = Depends(verify_firebase_token)):
     if not db:
@@ -1050,6 +1058,7 @@ async def get_history(user: dict = Depends(verify_firebase_token)):
                     "created_at": data.get("created_at", "")
                 })
         
+        # In-memory sorting to prevent index errors
         history.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
         return history
     except Exception as e:

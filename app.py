@@ -42,13 +42,15 @@ else:
     print("❌ FIREBASE_CREDENTIALS Environment Variable missing!")
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-# Active Model (You can change this to "meta-llama/llama-3.1-8b-instruct:free" if needed)
-OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
+# ================= Groq API Setup =================
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
-# Concurrency control: Set to 1 to avoid hitting shared free-tier rate limits
-semaphore = asyncio.Semaphore(1)
+# Groq ultra-fast & high-limit model
+GROQ_MODEL = "llama-3.1-8b-instant"
+
+# Increased Concurrency: Groq supports high RPM
+semaphore = asyncio.Semaphore(3)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -528,7 +530,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 2; // Process 2 files per request to prevent timeouts
+            const CHUNK_SIZE = 3; // Processing 3 files at once for faster Groq execution
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -550,7 +552,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 }
 
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
 
@@ -863,8 +865,10 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
+# ================= Groq Evaluation Function =================
+
 def evaluate_quality(transcript, metrics_list):
-    url = "https://openrouter.ai/api/v1/chat/completions"
+    url = "https://api.groq.com/openai/v1/chat/completions"
     
     evaluated_metrics_json = {}
     metric_instructions = []
@@ -897,37 +901,36 @@ def evaluate_quality(transcript, metrics_list):
     """
 
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:8000",
-        "X-Title": "AI Call Auditor"
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
     }
 
     payload = {
-        "model": OPENROUTER_MODEL,
-        "messages": [{"role": "user", "content": prompt}]
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"}
     }
 
-    max_retries = 6
-    retry_delay = 5
+    max_retries = 5
+    retry_delay = 3
 
     for attempt in range(max_retries):
         response = requests.post(url, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             res_data = response.json()
-            openrouter_raw_text = res_data['choices'][0]['message']['content']
-            clean_json = re.sub(r'```(?:json)?\n?', '', openrouter_raw_text).replace('```', '').strip()
+            groq_raw_text = res_data['choices'][0]['message']['content']
+            clean_json = re.sub(r'```(?:json)?\n?', '', groq_raw_text).replace('```', '').strip()
             return json.loads(clean_json)
         
         elif response.status_code == 429:
-            print(f"⚠️ OpenRouter 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            print(f"⚠️ Groq 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay *= 2  # Exponential backoff
+            retry_delay *= 2
         else:
-            raise Exception(f"OpenRouter Error ({response.status_code}): {response.text}")
+            raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
-    raise Exception("OpenRouter Rate Limit Exceeded after maximum retries.")
+    raise Exception("Groq Rate Limit Exceeded after maximum retries.")
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -960,7 +963,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(2.5)  # Throttle to prevent rate limits
+        await asyncio.sleep(0.5)  # Fast processing delay
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

@@ -13,6 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import requests
 
+# Fixed Import Here:
+import firebase_admin
+from firebase_admin import credentials, firestore, auth
+
 app = FastAPI()
 
 app.add_middleware(
@@ -905,7 +909,6 @@ def evaluate_quality(transcript, metrics_list):
     if not active_key:
         raise Exception("Gemini API Key missing! Please set GEMINI_KEYS variable in Render.")
 
-    # Standard endpoint structure that avoids 404
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_key}"
 
     evaluated_metrics_json = {}

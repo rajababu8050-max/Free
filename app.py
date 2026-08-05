@@ -45,7 +45,6 @@ else:
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
 # ================= Google Gemini Multi-Key Rotation Setup =================
-# Comma-separated keys in Render: GEMINI_KEYS="key1,key2,key3" or fallback GEMINI_API_KEY
 raw_gemini_keys = os.environ.get("GEMINI_KEYS", os.environ.get("GEMINI_API_KEY", ""))
 GEMINI_KEYS = [k.strip() for k in raw_gemini_keys.split(",") if k.strip()]
 
@@ -60,10 +59,8 @@ def get_next_gemini_key():
         return next(gemini_key_cycle)
     return ""
 
-# Concurrency set to 3 parallel workers for 3 active keys
 semaphore = asyncio.Semaphore(3)
 
-# Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
     {"key": "upsell_opportunity_available", "label": "Upsell Opportunity Available", "description": "Was there an opportunity to pitch an upsell or add-on product?"},
     {"key": "upsell_pitch_done", "label": "Upsell Pitch Done", "description": "Did the agent attempt an upsell pitch during the call?"},
@@ -74,7 +71,6 @@ DEFAULT_METRICS = [
 ]
 
 def init_default_metrics():
-    """Seed initial metrics if collection is empty"""
     if db:
         try:
             docs = list(db.collection("metrics").limit(1).stream())
@@ -121,7 +117,6 @@ HTML_CONTENT = """<!DOCTYPE html>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
-    <!-- Firebase Web SDK Integration -->
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
 
@@ -173,7 +168,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
                     AI Call Quality Auditor Pro
                 </h1>
-                <p class="text-sub text-sm">Pharma Metrics Evaluation & Bulk Quality Auditing (Multi-Key Gemini 1.5 Pro)</p>
+                <p class="text-sub text-sm">Pharma Metrics Evaluation & Bulk Quality Auditing (Gemini 1.5 Pro)</p>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
                 <a href="/ai.html" class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold px-4 py-2 rounded-xl text-xs sm:text-sm shadow-lg shadow-purple-500/30 flex items-center gap-2 transform hover:-translate-y-0.5 transition duration-200 border border-purple-400/30">
@@ -203,7 +198,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Browse Files
                     </button>
                     <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
-                        🚀 Start Fast Gemini Pro Batch Analysis
+                        🚀 Start Gemini Pro Batch Analysis
                     </button>
                 </div>
             </div>
@@ -214,7 +209,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
                 </div>
                 <div id="loaderText" class="text-xs text-blue-400 font-medium">
-                    ⚡ Auditing speech with Multi-Key Gemini 1.5 Pro... 0 / 0 Completed
+                    ⚡ Auditing speech with Gemini Pro... 0 / 0 Completed
                 </div>
             </div>
         </div>
@@ -233,7 +228,6 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
             </div>
 
-            <!-- Aggregate Summary Table Box -->
             <div id="summaryTableContainer" class="card-bg border border-slate-700 rounded-2xl p-5 shadow-xl space-y-4">
                 <div class="flex justify-between items-center border-b border-slate-700 pb-3">
                     <div>
@@ -288,7 +282,6 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </table>
             </div>
 
-            <!-- Pagination Controls -->
             <div class="flex justify-between items-center pt-2 text-xs border-t border-slate-700/60">
                 <span id="pageInfoText" class="text-sub font-medium">Page 1 of 1</span>
                 <div class="flex gap-2">
@@ -537,7 +530,6 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= MULTI-KEY PACED BATCH UPLOAD FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -549,7 +541,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             
             currentBatchResults = [];
             const totalFiles = selectedFiles.length;
-            const CHUNK_SIZE = 2; // Process 2 files per batch for safe multi-key distribution
+            const CHUNK_SIZE = 2;
 
             let completedCount = 0;
 
@@ -575,7 +567,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 completedCount += chunk.length;
                 const progressPct = Math.round((completedCount / totalFiles) * 100);
                 document.getElementById('progressBar').style.width = progressPct + "%";
-                document.getElementById('loaderText').innerText = `⚡ Auditing speech with Gemini 1.5 Pro... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
+                document.getElementById('loaderText').innerText = `⚡ Auditing speech with Gemini Pro... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
 
                 if (i + CHUNK_SIZE < totalFiles) {
                     await new Promise(resolve => setTimeout(resolve, 500));
@@ -679,7 +671,6 @@ HTML_CONTENT = """<!DOCTYPE html>
             });
         }
 
-        // ================= HISTORY LOADING WITH TOKEN REFRESH =================
         async function loadHistory() {
             var hTable = document.getElementById('historyTable');
             try {
@@ -910,11 +901,13 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= Multi-Key Gemini 1.5 Pro Evaluation Function =================
+# ================= Multi-Key Gemini Evaluation Function (Endpoint Fixed) =================
 
 def evaluate_quality(transcript, metrics_list):
     active_key = get_next_gemini_key()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={active_key}"
+    
+    # Updated Endpoint to stable alias with fallback mechanism
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key={active_key}"
     
     evaluated_metrics_json = {}
     metric_instructions = []
@@ -974,13 +967,24 @@ def evaluate_quality(transcript, metrics_list):
             return json.loads(clean_json)
         
         elif response.status_code == 429:
-            print(f"⚠️ Gemini Pro 429 Rate Limit hit on key. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            print(f"⚠️ Gemini Pro 429 Rate Limit hit. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
             retry_delay += 5
         else:
-            raise Exception(f"Gemini Pro Error ({response.status_code}): {response.text}")
+            # Automatic fallback to gemini-1.5-flash if Pro model isn't active on key
+            print(f"⚠️ Gemini Pro Endpoint Issue ({response.status_code}). Attempting Fallback to Flash Model...")
+            fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_key}"
+            fallback_res = requests.post(fallback_url, headers=headers, json=payload, timeout=60)
+            
+            if fallback_res.status_code == 200:
+                res_data = fallback_res.json()
+                raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
+                clean_json = re.sub(r'```(?:json)?\n?', '', raw_text).replace('```', '').strip()
+                return json.loads(clean_json)
+                
+            raise Exception(f"Gemini Error ({response.status_code}): {response.text}")
 
-    raise Exception("Gemini Pro Rate Limit Exceeded after maximum retries.")
+    raise Exception("Gemini Rate Limit Exceeded after maximum retries.")
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -1013,7 +1017,6 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        # Reduced delay to 10s using multi-key rotation
         await asyncio.sleep(10.0)
         return await process_single_file(file, active_metrics)
 
@@ -1034,7 +1037,6 @@ async def analyze_audio_batch(
     results = await asyncio.gather(*tasks)
     return {"results": results}
 
-# ================= GET HISTORY ENDPOINT =================
 @app.get("/api/history")
 async def get_history(user: dict = Depends(verify_firebase_token)):
     if not db:

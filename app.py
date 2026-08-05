@@ -44,7 +44,7 @@ else:
 
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
-# ================= Gemini Multi-Key Rotation Setup =================
+# ================= Gemini 3.6 Flash Multi-Key Rotation Setup =================
 raw_gemini_keys = os.environ.get("GEMINI_KEYS", os.environ.get("GEMINI_API_KEY", ""))
 GEMINI_KEYS = [k.strip() for k in raw_gemini_keys.split(",") if k.strip()]
 
@@ -59,8 +59,7 @@ def get_next_gemini_key():
         return next(gemini_key_cycle)
     return ""
 
-# HIGH-SPEED OPTIMIZATION: Concurrency set to 3 parallel workers
-semaphore = asyncio.Semaphore(3)
+semaphore = asyncio.Semaphore(2)
 
 DEFAULT_METRICS = [
     {"key": "upsell_opportunity_available", "label": "Upsell Opportunity Available", "description": "Was there an opportunity to pitch an upsell or add-on product?"},
@@ -169,7 +168,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
                     AI Call Quality Auditor Pro
                 </h1>
-                <p class="text-sub text-sm">Pharma Metrics Evaluation & High-Speed Bulk Auditing</p>
+                <p class="text-sub text-sm">Pharma Metrics Evaluation & Bulk Auditing (Gemini 3.6 Flash Engine)</p>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
                 <a href="/ai.html" class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold px-4 py-2 rounded-xl text-xs sm:text-sm shadow-lg shadow-purple-500/30 flex items-center gap-2 transform hover:-translate-y-0.5 transition duration-200 border border-purple-400/30">
@@ -191,7 +190,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="card-bg border-2 border-dashed border-slate-600 rounded-2xl p-6 text-center shadow-lg">
             <div class="space-y-3">
                 <div class="w-12 h-12 bg-blue-500/10 text-blue-400 rounded-full flex items-center justify-center mx-auto text-xl font-bold">🎙️</div>
-                <p id="fileName" class="text-sm font-medium">Select Audio File(s) (.mp3, .wav, .awb) - High Speed Turbo Mode Active</p>
+                <p id="fileName" class="text-sm font-medium">Select Audio File(s) (.mp3, .wav, .awb) - Optimized for 50+ Bulk Audios</p>
                 <input type="file" id="audioInput" accept="audio/*" multiple class="hidden" onchange="fileSelected(event)">
                 
                 <div class="flex justify-center gap-3">
@@ -199,7 +198,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Browse Files
                     </button>
                     <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
-                        🚀 Start Fast Batch Analysis
+                        🚀 Start Gemini 3.6 Flash Batch Analysis
                     </button>
                 </div>
             </div>
@@ -210,7 +209,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
                 </div>
                 <div id="loaderText" class="text-xs text-blue-400 font-medium">
-                    ⚡ Auditing speech at turbo speed... 0 / 0 Completed
+                    ⚡ Auditing speech with Gemini 3.6 Flash... 0 / 0 Completed
                 </div>
             </div>
         </div>
@@ -531,7 +530,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= HIGH-SPEED PARALLEL UPLOAD =================
+        // ================= SMOOTH CHUNK UPLOAD FOR 50+ FILES =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -543,7 +542,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             
             currentBatchResults = [];
             const totalFiles = selectedFiles.length;
-            const CHUNK_SIZE = 3; // Batch 3 files together for turbo processing
+            const CHUNK_SIZE = 2; // Process 2 files per batch for smooth rate-limit management
 
             let completedCount = 0;
 
@@ -569,10 +568,10 @@ HTML_CONTENT = """<!DOCTYPE html>
                 completedCount += chunk.length;
                 const progressPct = Math.round((completedCount / totalFiles) * 100);
                 document.getElementById('progressBar').style.width = progressPct + "%";
-                document.getElementById('loaderText').innerText = `⚡ Auditing speech at turbo speed... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
+                document.getElementById('loaderText').innerText = `⚡ Auditing speech with Gemini 3.6 Flash... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
 
                 if (i + CHUNK_SIZE < totalFiles) {
-                    await new Promise(resolve => setTimeout(resolve, 500)); // Fast minimal delay
+                    await new Promise(resolve => setTimeout(resolve, 800)); // Smooth inter-chunk pacing
                 }
             }
 
@@ -903,9 +902,16 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= FAST & DETERMINISTIC EVALUATION =================
+# ================= FIXED 100% DETERMINISTIC GEMINI EVALUATION FUNCTION =================
 
 def evaluate_quality(transcript, metrics_list):
+    active_key = get_next_gemini_key()
+    if not active_key:
+        raise Exception("Gemini API Key missing! Please set GEMINI_KEYS variable in Render.")
+
+    # Official Gemini 3.6 Flash endpoint
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={active_key}"
+
     evaluated_metrics_json = {}
     metric_instructions = []
 
@@ -918,10 +924,17 @@ def evaluate_quality(transcript, metrics_list):
     metrics_guide = "\n".join(metric_instructions)
 
     prompt = f"""
-    Analyze the following audio call transcript and evaluate quality score (0-100) and evaluated metrics.
-    
-    Evaluation Rules for Metrics:
+    You are an extremely strict, deterministic, and objective Quality Assurance Auditor for call analysis.
+    Your evaluation MUST BE 100% CONSISTENT AND REPRODUCIBLE. For the exact same transcript, you MUST ALWAYS output the exact same overall_score.
+
+    EVALUATION INSTRUCTIONS:
+    1. Base Score starts at exactly 100.
+    2. Check the transcript against the evaluated metrics below:
     {metrics_guide}
+    3. Apply STRICT DEDUCTION RULES consistently:
+       - If an expected compliance step/metric is missing or false: Deduct EXACTLY 10 points per missing item.
+       - If agent tone is bad or pitch ineffective: Deduct EXACTLY 15 points.
+       - Do NOT use arbitrary or random point deductions. Calculate: Score = 100 - (Total Deductions).
 
     Transcript:
     {json.dumps(transcript, indent=2)}
@@ -936,23 +949,8 @@ def evaluate_quality(transcript, metrics_list):
     }}
     """
 
-    system_instruction_text = """
-    You are a strict, fully deterministic Quality Assurance Auditor.
-    You MUST produce the EXACT SAME evaluation and overall_score for identical transcripts every single time.
-    
-    SCORING ALGORITHM:
-    1. Base score is 100.
-    2. For each evaluated_metric that is FALSE/FAILED, deduct EXACTLY 10 points.
-    3. Do NOT invent random deductions or variable penalties.
-    4. Calculate: overall_score = 100 - (10 * count_of_false_metrics).
-    5. Always return strict valid JSON matching the requested schema.
-    """
-
     headers = {"Content-Type": "application/json"}
     payload = {
-        "systemInstruction": {
-            "parts": [{"text": system_instruction_text}]
-        },
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "response_mime_type": "application/json",
@@ -961,37 +959,26 @@ def evaluate_quality(transcript, metrics_list):
         }
     }
 
-    max_retries = 10
+    max_retries = 8
     retry_delay = 3
 
     for attempt in range(max_retries):
-        active_key = get_next_gemini_key()
-        if not active_key:
-            raise Exception("Gemini API Key missing! Please set GEMINI_KEYS variable in Render.")
-
-        # Fast Stable Flash Endpoint
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={active_key}"
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
         
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
-            
-            if response.status_code == 200:
-                res_data = response.json()
-                raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
-                clean_json = re.sub(r'```(?:json)?\n?', '', raw_text).replace('```', '').strip()
-                return json.loads(clean_json)
-            
-            elif response.status_code == 429:
-                print(f"⚠️ 429 Rate Limit hit. Rotating key & waiting {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
-                time.sleep(retry_delay)
-                retry_delay += 1
-            else:
-                time.sleep(1)
-        except Exception as err:
-            print(f"⚠️ Gemini Request Exception: {str(err)}. Retrying...")
-            time.sleep(1)
+        if response.status_code == 200:
+            res_data = response.json()
+            raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
+            clean_json = re.sub(r'```(?:json)?\n?', '', raw_text).replace('```', '').strip()
+            return json.loads(clean_json)
+        
+        elif response.status_code == 429:
+            print(f"⚠️ Gemini 3.6 Flash 429 Rate Limit hit. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
+            time.sleep(retry_delay)
+            retry_delay += 3
+        else:
+            raise Exception(f"Gemini 3.6 Flash Error ({response.status_code}): {response.text}")
 
-    raise Exception("Gemini Rate Limit Exceeded after maximum retries.")
+    raise Exception("Gemini 3.6 Flash Rate Limit Exceeded after maximum retries.")
 
 async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
     try:
@@ -1024,7 +1011,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(0.4)  # Optimized delay for fast execution
+        await asyncio.sleep(0.3)
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

@@ -61,8 +61,8 @@ def get_next_groq_key():
 
 GROQ_MODEL = "llama-3.1-8b-instant"
 
-# Increased concurrency to 3 parallel workers for 3 active keys
-semaphore = asyncio.Semaphore(3)
+# Rate Limit Safe Concurrency: Up to 2 files processed simultaneously
+semaphore = asyncio.Semaphore(2)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -204,7 +204,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Browse Files
                     </button>
                     <button type="button" onclick="uploadAudioBatch()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2 rounded-xl text-sm shadow-lg shadow-blue-500/20">
-                        🚀 Start Fast Bulk Batch Analysis
+                        🚀 Start Bulk Batch Analysis
                     </button>
                 </div>
             </div>
@@ -538,7 +538,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= FAST & SAFE CHUNKING BATCH UPLOAD FUNCTION =================
+        // ================= RATE LIMIT SAFE CHUNKING BATCH UPLOAD FUNCTION =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -550,7 +550,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             
             currentBatchResults = [];
             const totalFiles = selectedFiles.length;
-            const CHUNK_SIZE = 3; // Increased to 3 files per chunk for fast parallel pipeline
+            const CHUNK_SIZE = 2; // Process 2 files per batch for safe Groq TPM management
 
             let completedCount = 0;
 
@@ -579,7 +579,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 document.getElementById('loaderText').innerText = `⚡ Auditing speech & evaluating metrics... ${completedCount} / ${totalFiles} Completed (${progressPct}%)`;
 
                 if (i + CHUNK_SIZE < totalFiles) {
-                    await new Promise(resolve => setTimeout(resolve, 400));
+                    await new Promise(resolve => setTimeout(resolve, 800));
                 }
             }
 
@@ -689,9 +689,11 @@ HTML_CONTENT = """<!DOCTYPE html>
                     return;
                 }
 
+                // Force refresh ID token before history request
                 idToken = await auth.currentUser.getIdToken(true);
                 var res = await fetchAuth("/api/history");
 
+                // If 401 Unauthorized occurs, retry once with fresh token
                 if (res.status === 401) {
                     idToken = await auth.currentUser.getIdToken(true);
                     res = await fetchAuth("/api/history");
@@ -887,7 +889,7 @@ async def delete_metric(
 def transcribe_bytes(audio_bytes):
     url = "https://api.deepgram.com/v1/listen?model=nova-2&language=hi&detect_language=true&diarize=true&punctuate=true&utterances=true"
     headers = {"Authorization": "Token " + DEEPGRAM_API_KEY, "Content-Type": "audio/mp3"}
-    response = requests.post(url, headers=headers, data=audio_bytes, timeout=30)
+    response = requests.post(url, headers=headers, data=audio_bytes, timeout=120)
     if response.status_code != 200:
         raise Exception(f"Deepgram Error ({response.status_code}): {response.text}")
         
@@ -959,7 +961,7 @@ def evaluate_quality(transcript, metrics_list):
     }
 
     max_retries = 8
-    retry_delay = 3
+    retry_delay = 4
 
     for attempt in range(max_retries):
         active_key = get_next_groq_key()
@@ -979,7 +981,7 @@ def evaluate_quality(transcript, metrics_list):
         elif response.status_code == 429:
             print(f"⚠️ Groq 429 Rate Limit hit. Rotating key & Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay += 2
+            retry_delay += 3
         else:
             raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
@@ -1016,7 +1018,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(0.3)  # Fast processing buffer
+        await asyncio.sleep(0.8)
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

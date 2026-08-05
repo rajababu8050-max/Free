@@ -521,7 +521,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= CHUNKING & AUTO-TOKEN REFRESH BATCH FUNCTION =================
+        // ================= UPDATED BATCH FUNCTION WITH SOLUTION 1 (5s DELAY & CHUNK=1) =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -532,7 +532,9 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 2; // Ek baar mein 2 files process hongi (Render timeout se bachne ke liye)
+            
+            // Chunk size 1 kiya gaya hai taaki Google AI Studio ki 16k token limit cross na ho
+            const CHUNK_SIZE = 1;
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -540,7 +542,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 chunk.forEach(file => formData.append("files", file));
 
                 try {
-                    // Fresh token fetch kar rahe hain taaki token expire issue na aaye
+                    // Fresh token fetch kar rahe hain taaki auth expire issue na aaye
                     if (auth.currentUser) {
                         idToken = await auth.currentUser.getIdToken(true);
                     }
@@ -558,9 +560,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                     console.error("Batch processing error:", err);
                 }
 
-                // OpenRouter Free Rate Limits (RPM) se bachne ke liye 2 second ka gap
+                // Solution 1: Google AI Studio 16k Token Limit se bachne ke liye 5 second (5000ms) ka delay
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, 5000));
                 }
             }
 

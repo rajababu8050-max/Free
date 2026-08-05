@@ -49,8 +49,8 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 # High accuracy 70B Parameter model
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Optimal concurrency for 70B model rate limits
-semaphore = asyncio.Semaphore(2)
+# Rate Limit Avoidance: Strictly process 1 request at a time to prevent 429 Free/Tier-1 crashes
+semaphore = asyncio.Semaphore(1)
 
 # Default metrics to seed in Firestore if empty
 DEFAULT_METRICS = [
@@ -387,7 +387,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         async function fetchAuth(url, options = {}) {
             if (!options.headers) options.headers = {};
             if (auth.currentUser) {
-                idToken = await auth.currentUser.getIdToken();
+                idToken = await auth.currentUser.getIdToken(true); // Always fetch fresh token
             }
             options.headers['Authorization'] = 'Bearer ' + idToken;
             return fetch(url, options);
@@ -519,7 +519,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             }
         }
 
-        // ================= CHUNKING BATCH UPLOAD FUNCTION =================
+        // ================= RATE LIMIT PROTECTED SEQUENTIAL BATCH UPLOAD =================
         async function uploadAudioBatch() {
             if (selectedFiles.length === 0) {
                 alert("Pehle audio file(s) select karein!");
@@ -530,7 +530,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             document.getElementById('batchResultsContainer').classList.remove('hidden');
             
             currentBatchResults = [];
-            const CHUNK_SIZE = 2; // Optimal 2 files per batch for high accuracy 70b model
+            const CHUNK_SIZE = 1; // Strictly 1 file at a time to keep Groq API stable
 
             for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
                 const chunk = selectedFiles.slice(i, i + CHUNK_SIZE);
@@ -551,8 +551,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                     console.error("Batch processing error:", err);
                 }
 
+                // Smooth delay between file processing to prevent Groq API rate limits
                 if (i + CHUNK_SIZE < selectedFiles.length) {
-                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
 
@@ -865,7 +866,7 @@ def transcribe_bytes(audio_bytes):
     wpm = int((total_words / duration) * 60) if duration > 0 else 0
     return formatted_transcript, {"duration": duration, "total_words": total_words, "wpm": wpm}
 
-# ================= Groq High Accuracy Evaluation Function =================
+# ================= Groq High Accuracy Evaluation Function (Deterministic & Rate-Limit Safe) =================
 
 def evaluate_quality(transcript, metrics_list):
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -887,6 +888,11 @@ def evaluate_quality(transcript, metrics_list):
     Evaluation Rules for Metrics:
     {metrics_guide}
 
+    Scoring Rule:
+    - Base score is 100.
+    - Deduct fixed points consistently for any agent mistakes or missing compliance.
+    - Be completely objective and deterministic in scoring.
+
     Transcript:
     {json.dumps(transcript, indent=2)}
 
@@ -905,14 +911,17 @@ def evaluate_quality(transcript, metrics_list):
         "Content-Type": "application/json"
     }
 
+    # Added temperature=0.0 to enforce strict deterministic scoring output across identical files
     payload = {
         "model": GROQ_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"}
+        "response_format": {"type": "json_object"},
+        "temperature": 0.0,
+        "top_p": 1.0
     }
 
-    max_retries = 5
-    retry_delay = 4
+    max_retries = 8
+    retry_delay = 5
 
     for attempt in range(max_retries):
         response = requests.post(url, headers=headers, json=payload, timeout=60)
@@ -926,7 +935,7 @@ def evaluate_quality(transcript, metrics_list):
         elif response.status_code == 429:
             print(f"⚠️ Groq 429 Rate Limit hit. Retrying in {retry_delay}s... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
-            retry_delay *= 2
+            retry_delay += 3  # Gradual backoff delay
         else:
             raise Exception(f"Groq Error ({response.status_code}): {response.text}")
 
@@ -963,7 +972,7 @@ async def process_single_file(file: UploadFile, active_metrics: List[Dict]):
 
 async def process_single_file_limited(file: UploadFile, active_metrics: List[Dict]):
     async with semaphore:
-        await asyncio.sleep(1)  # Smooth delay for 70b model
+        await asyncio.sleep(2)  # Delay between requests to keep API smooth
         return await process_single_file(file, active_metrics)
 
 # ================= Batch Analysis & History APIs =================

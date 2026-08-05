@@ -969,7 +969,7 @@ def evaluate_quality(transcript, metrics_list):
         if not active_key:
             raise Exception("Gemini API Key missing! Please set GEMINI_KEYS variable in Render.")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={active_key}"
         
         response = requests.post(url, headers=headers, json=payload, timeout=60)
         
